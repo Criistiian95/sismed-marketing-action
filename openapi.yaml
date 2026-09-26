@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
   title: Sismed Prospectos API
-  version: 1.0.0
-  description: API para registrar y gestionar prospectos comerciales de consultorios para Sismed. No usar para datos de pacientes ni información clínica.
+  version: 1.1.0
+  description: API para registrar y gestionar prospectos comerciales de consultorios para Sismed. No usar para información clínica ni datos de pacientes.
 servers:
-  - url: https://TU-DOMINIO-DE-RAILWAY.up.railway.app
+  - url: https://TU-SERVICIO.onrender.com
 paths:
   /api/prospectos:
     post:
@@ -19,12 +19,9 @@ paths:
             schema:
               $ref: '#/components/schemas/NuevoProspecto'
       responses:
-        '201':
-          description: Prospecto creado
-        '400':
-          description: Datos inválidos
-        '401':
-          description: No autorizado
+        '201': { description: Prospecto creado }
+        '400': { description: Datos inválidos }
+        '401': { description: No autorizado }
     get:
       operationId: listarProspectos
       summary: Listar prospectos comerciales
@@ -45,10 +42,8 @@ paths:
             maximum: 100
             default: 25
       responses:
-        '200':
-          description: Lista de prospectos
-        '401':
-          description: No autorizado
+        '200': { description: Lista de prospectos }
+        '401': { description: No autorizado }
   /api/prospectos/{id}:
     patch:
       operationId: actualizarProspecto
@@ -69,14 +64,10 @@ paths:
             schema:
               $ref: '#/components/schemas/ActualizacionProspecto'
       responses:
-        '200':
-          description: Prospecto actualizado
-        '400':
-          description: Datos inválidos
-        '401':
-          description: No autorizado
-        '404':
-          description: Prospecto no encontrado
+        '200': { description: Prospecto actualizado }
+        '400': { description: Datos inválidos }
+        '401': { description: No autorizado }
+        '404': { description: Prospecto no encontrado }
 components:
   securitySchemes:
     bearerAuth:
@@ -94,62 +85,29 @@ components:
       additionalProperties: false
       required: [nombre_consultorio]
       properties:
-        nombre_consultorio:
-          type: string
-          maxLength: 200
-        ciudad:
-          type: string
-          maxLength: 120
-        contacto_nombre:
-          type: string
-          maxLength: 160
-        canal:
-          $ref: '#/components/schemas/Canal'
-        contacto:
-          type: string
-          maxLength: 255
-          description: Email, teléfono, usuario social o URL de contacto comercial.
-        fuente:
-          type: string
-          maxLength: 255
-        estado:
-          $ref: '#/components/schemas/Estado'
+        nombre_consultorio: { type: string, maxLength: 200 }
+        ciudad: { type: string, maxLength: 120 }
+        contacto_nombre: { type: string, maxLength: 160 }
+        canal: { $ref: '#/components/schemas/Canal' }
+        contacto: { type: string, maxLength: 255 }
+        fuente: { type: string, maxLength: 255 }
+        estado: { $ref: '#/components/schemas/Estado' }
         notas:
           type: string
           maxLength: 4000
-          description: Solo notas comerciales. No incluir información clínica ni datos de pacientes.
-        proxima_accion:
-          type: string
-          maxLength: 255
-        fecha_proxima_accion:
-          type: string
-          format: date-time
+          description: Solo notas comerciales; nunca información clínica ni datos de pacientes.
+        proxima_accion: { type: string, maxLength: 255 }
+        fecha_proxima_accion: { type: string, format: date-time }
     ActualizacionProspecto:
       type: object
       additionalProperties: false
       properties:
-        ciudad:
-          type: string
-          maxLength: 120
-        contacto_nombre:
-          type: string
-          maxLength: 160
-        canal:
-          $ref: '#/components/schemas/Canal'
-        contacto:
-          type: string
-          maxLength: 255
-        fuente:
-          type: string
-          maxLength: 255
-        estado:
-          $ref: '#/components/schemas/Estado'
-        notas:
-          type: string
-          maxLength: 4000
-        proxima_accion:
-          type: string
-          maxLength: 255
-        fecha_proxima_accion:
-          type: string
-          format: date-time
+        ciudad: { type: string, maxLength: 120 }
+        contacto_nombre: { type: string, maxLength: 160 }
+        canal: { $ref: '#/components/schemas/Canal' }
+        contacto: { type: string, maxLength: 255 }
+        fuente: { type: string, maxLength: 255 }
+        estado: { $ref: '#/components/schemas/Estado' }
+        notas: { type: string, maxLength: 4000 }
+        proxima_accion: { type: string, maxLength: 255 }
+        fecha_proxima_accion: { type: string, format: date-time }

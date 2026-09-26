@@ -1,7 +1,8 @@
 {
-  "name": "sismed-prospectos-action",
-  "version": "1.0.0",
+  "name": "sismed-marketing-action",
+  "version": "1.1.0",
   "private": true,
+  "description": "API de prospectos para Sismed Marketing IA en Render + PostgreSQL.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -13,6 +14,6 @@
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
-    "mysql2": "^3.14.4"
+    "pg": "^8.13.3"
   }
 }
