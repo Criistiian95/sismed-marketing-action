@@ -1,0 +1,155 @@
+openapi: 3.1.0
+info:
+  title: Sismed Prospectos API
+  version: 1.0.0
+  description: API para registrar y gestionar prospectos comerciales de consultorios para Sismed. No usar para datos de pacientes ni información clínica.
+servers:
+  - url: https://TU-DOMINIO-DE-RAILWAY.up.railway.app
+paths:
+  /api/prospectos:
+    post:
+      operationId: crearProspecto
+      summary: Registrar un nuevo consultorio potencial
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NuevoProspecto'
+      responses:
+        '201':
+          description: Prospecto creado
+        '400':
+          description: Datos inválidos
+        '401':
+          description: No autorizado
+    get:
+      operationId: listarProspectos
+      summary: Listar prospectos comerciales
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Estado'
+        - name: limite
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        '200':
+          description: Lista de prospectos
+        '401':
+          description: No autorizado
+  /api/prospectos/{id}:
+    patch:
+      operationId: actualizarProspecto
+      summary: Actualizar estado, notas o próxima acción
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActualizacionProspecto'
+      responses:
+        '200':
+          description: Prospecto actualizado
+        '400':
+          description: Datos inválidos
+        '401':
+          description: No autorizado
+        '404':
+          description: Prospecto no encontrado
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Estado:
+      type: string
+      enum: [nuevo, contactado, respondio, interesado, piloto, descartado]
+    Canal:
+      type: string
+      enum: [instagram, facebook, whatsapp, email, telefono, linkedin, web, visita, otro]
+    NuevoProspecto:
+      type: object
+      additionalProperties: false
+      required: [nombre_consultorio]
+      properties:
+        nombre_consultorio:
+          type: string
+          maxLength: 200
+        ciudad:
+          type: string
+          maxLength: 120
+        contacto_nombre:
+          type: string
+          maxLength: 160
+        canal:
+          $ref: '#/components/schemas/Canal'
+        contacto:
+          type: string
+          maxLength: 255
+          description: Email, teléfono, usuario social o URL de contacto comercial.
+        fuente:
+          type: string
+          maxLength: 255
+        estado:
+          $ref: '#/components/schemas/Estado'
+        notas:
+          type: string
+          maxLength: 4000
+          description: Solo notas comerciales. No incluir información clínica ni datos de pacientes.
+        proxima_accion:
+          type: string
+          maxLength: 255
+        fecha_proxima_accion:
+          type: string
+          format: date-time
+    ActualizacionProspecto:
+      type: object
+      additionalProperties: false
+      properties:
+        ciudad:
+          type: string
+          maxLength: 120
+        contacto_nombre:
+          type: string
+          maxLength: 160
+        canal:
+          $ref: '#/components/schemas/Canal'
+        contacto:
+          type: string
+          maxLength: 255
+        fuente:
+          type: string
+          maxLength: 255
+        estado:
+          $ref: '#/components/schemas/Estado'
+        notas:
+          type: string
+          maxLength: 4000
+        proxima_accion:
+          type: string
+          maxLength: 255
+        fecha_proxima_accion:
+          type: string
+          format: date-time
