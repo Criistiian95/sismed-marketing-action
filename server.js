@@ -1,11 +1,16 @@
 require("dotenv").config();
+
 const express = require("express");
 const helmet = require("helmet");
 const { Pool } = require("pg");
 
 const app = express();
-app.use(helmet());
+
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 app.use(express.json({ limit: "200kb" }));
+app.use("/media", express.static("public"));
 
 const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.ACTION_API_KEY;
@@ -22,21 +27,43 @@ if (!API_KEY || !DATABASE_URL) {
 
 const pool = new Pool({ connectionString: DATABASE_URL });
 
-const ESTADOS = new Set(["nuevo","contactado","respondio","interesado","piloto","descartado"]);
-const CANALES = new Set(["instagram","facebook","whatsapp","email","telefono","linkedin","web","visita","otro"]);
+const ESTADOS = new Set([
+  "nuevo",
+  "contactado",
+  "respondio",
+  "interesado",
+  "piloto",
+  "descartado"
+]);
 
-const clean = (v, max=255) =>
-  (v === undefined || v === null || v === "") ? null : String(v).trim().slice(0, max);
+const CANALES = new Set([
+  "instagram",
+  "facebook",
+  "whatsapp",
+  "email",
+  "telefono",
+  "linkedin",
+  "web",
+  "visita",
+  "otro"
+]);
 
-const parseDate = (v) => {
-  if (!v) return null;
-  const d = new Date(v);
+const clean = (value, max = 255) => {
+  if (value === undefined || value === null || value === "") return null;
+  return String(value).trim().slice(0, max);
+};
+
+const parseDate = (value) => {
+  if (!value) return null;
+  const d = new Date(value);
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 };
 
 function requireInstagram() {
   if (!IG_TOKEN || !IG_ACCOUNT_ID) {
-    const err = new Error("Faltan INSTAGRAM_ACCESS_TOKEN o INSTAGRAM_ACCOUNT_ID en Render");
+    const err = new Error(
+      "Faltan INSTAGRAM_ACCESS_TOKEN o INSTAGRAM_ACCOUNT_ID en Render"
+    );
     err.status = 503;
     throw err;
   }
@@ -76,344 +103,714 @@ async function init() {
     )
   `);
 
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_prospectos_estado ON prospectos_sismed (estado)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_publicaciones_estado_fecha ON publicaciones_instagram (status, scheduled_at)`);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_prospectos_estado
+    ON prospectos_sismed (estado)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_publicaciones_estado_fecha
+    ON publicaciones_instagram (status, scheduled_at)
+  `);
 }
 
-function auth(req,res,next){
-  if ((req.get("authorization") || "") !== `Bearer ${API_KEY}`) {
-    return res.status(401).json({error:"No autorizado"});
+function auth(req, res, next) {
+  const header = req.get("authorization") || "";
+  if (header !== `Bearer ${API_KEY}`) {
+    return res.status(401).json({ error: "No autorizado" });
   }
   next();
 }
 
-async function igRequest(path, { method="GET", params={} } = {}) {
+async function igRequest(path, { method = "GET", params = {} } = {}) {
   requireInstagram();
+
   const url = new URL(`${IG_BASE}${path}`);
   const options = { method, headers: {} };
 
   if (method === "GET") {
-    for (const [k,v] of Object.entries({...params, access_token: IG_TOKEN})) {
-      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    const allParams = { ...params, access_token: IG_TOKEN };
+    for (const [key, value] of Object.entries(allParams)) {
+      if (value !== undefined && value !== null) {
+        url.searchParams.set(key, String(value));
+      }
     }
   } else {
     const body = new URLSearchParams();
-    for (const [k,v] of Object.entries({...params, access_token: IG_TOKEN})) {
-      if (v !== undefined && v !== null) body.set(k, String(v));
+    const allParams = { ...params, access_token: IG_TOKEN };
+
+    for (const [key, value] of Object.entries(allParams)) {
+      if (value !== undefined && value !== null) {
+        body.set(key, String(value));
+      }
     }
-    options.headers["Content-Type"] = "application/x-www-form-urlencoded";
+
+    options.headers["Content-Type"] =
+      "application/x-www-form-urlencoded";
     options.body = body;
   }
 
-  const r = await fetch(url, options);
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok || data.error) {
-    const msg = data?.error?.message || `Instagram API HTTP ${r.status}`;
-    const e = new Error(msg);
-    e.meta = data?.error || data;
-    throw e;
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data.error) {
+    const message =
+      data?.error?.message || `Instagram API HTTP ${response.status}`;
+
+    const err = new Error(message);
+    err.meta = data?.error || data;
+    throw err;
   }
+
   return data;
 }
 
 async function waitForContainer(containerId) {
   for (let i = 0; i < 8; i++) {
-    const s = await igRequest(`/${containerId}`, {
+    const status = await igRequest(`/${containerId}`, {
       params: { fields: "status_code,status" }
     });
-    if (s.status_code === "FINISHED" || s.status_code === "PUBLISHED") return s;
-    if (s.status_code === "ERROR" || s.status_code === "EXPIRED") {
-      throw new Error(`Contenedor de Instagram: ${s.status_code}${s.status ? " - "+s.status : ""}`);
+
+    if (
+      status.status_code === "FINISHED" ||
+      status.status_code === "PUBLISHED"
+    ) {
+      return status;
     }
-    await new Promise(r => setTimeout(r, 2500));
+
+    if (
+      status.status_code === "ERROR" ||
+      status.status_code === "EXPIRED"
+    ) {
+      throw new Error(
+        `Contenedor de Instagram: ${status.status_code}` +
+        (status.status ? ` - ${status.status}` : "")
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2500));
   }
-  throw new Error("Instagram todavía está procesando el contenido. Intentá nuevamente en unos segundos.");
+
+  throw new Error(
+    "Instagram todavía está procesando el contenido. Intentá nuevamente en unos segundos."
+  );
 }
 
-async function publishImage(imageUrl, caption="") {
+async function publishImage(imageUrl, caption = "") {
   requireInstagram();
-  if (!/^https:\/\//i.test(imageUrl)) throw new Error("image_url debe ser una URL pública HTTPS");
+
+  if (!/^https:\/\//i.test(imageUrl)) {
+    throw new Error("image_url debe ser una URL pública HTTPS");
+  }
 
   const container = await igRequest(`/${IG_ACCOUNT_ID}/media`, {
     method: "POST",
-    params: { image_url: imageUrl, caption: caption || "" }
+    params: {
+      image_url: imageUrl,
+      caption: caption || ""
+    }
   });
 
   await waitForContainer(container.id);
 
-  const published = await igRequest(`/${IG_ACCOUNT_ID}/media_publish`, {
-    method: "POST",
-    params: { creation_id: container.id }
-  });
+  const published = await igRequest(
+    `/${IG_ACCOUNT_ID}/media_publish`,
+    {
+      method: "POST",
+      params: {
+        creation_id: container.id
+      }
+    }
+  );
 
-  return { container_id: container.id, media_id: published.id };
+  return {
+    container_id: container.id,
+    media_id: published.id
+  };
 }
 
-app.get("/", (_req,res) => res.json({ok:true,service:"Sismed Marketing IA",version:"2.0.0"}));
+/* ---------- RUTAS PÚBLICAS ---------- */
 
-app.get("/health", async (_req,res) => {
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "Sismed Marketing IA",
+    version: "2.1.0"
+  });
+});
+
+app.get("/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
-    res.json({ok:true,service:"sismed-marketing-action",version:"2.0.0"});
-  } catch (e) {
-    console.error(e);
-    res.status(503).json({ok:false});
+
+    res.json({
+      ok: true,
+      service: "sismed-marketing-action",
+      version: "2.1.0"
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(503).json({ ok: false });
   }
 });
 
-app.get("/privacy", (_req,res) => {
-  res.type("html").send(`<!doctype html><html lang="es"><meta charset="utf-8">
-  <title>Privacidad - Sismed Marketing IA</title>
-  <body style="font-family:Arial;max-width:780px;margin:40px auto;padding:0 20px;line-height:1.55">
-  <h1>Política de privacidad - Sismed Marketing IA</h1>
-  <p>Esta API gestiona contactos comerciales y publicaciones de marketing de Sismed.</p>
-  <p>No debe almacenar historias clínicas, diagnósticos, datos de pacientes ni información médica sensible.</p>
-  <p>Los tokens y credenciales se almacenan como variables secretas del servicio y no se exponen mediante la API.</p>
-  </body></html>`);
+app.get("/privacy", (_req, res) => {
+  res.type("html").send(`
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Privacidad - Sismed Marketing IA</title>
+</head>
+<body style="font-family:Arial;max-width:780px;margin:40px auto;padding:0 20px;line-height:1.55">
+<h1>Política de privacidad - Sismed Marketing IA</h1>
+<p>Esta API gestiona contactos comerciales y publicaciones de marketing de Sismed.</p>
+<p>No debe almacenar historias clínicas, diagnósticos, datos de pacientes ni información médica sensible.</p>
+<p>Los tokens y credenciales se almacenan como variables secretas del servicio y no se exponen mediante la API.</p>
+</body>
+</html>
+  `);
 });
+
+/* ---------- RUTAS PROTEGIDAS ---------- */
 
 app.use("/api", auth);
+
 /* ---------- PROSPECTOS ---------- */
 
-app.post("/api/prospectos", async (req,res) => {
+app.post("/api/prospectos", async (req, res) => {
   try {
-    const b = req.body || {};
-    const nombre = clean(b.nombre_consultorio,200);
-    if (!nombre) return res.status(400).json({error:"nombre_consultorio es obligatorio"});
-    const estado = clean(b.estado,30) || "nuevo";
-    const canal = clean(b.canal,30);
-    if (!ESTADOS.has(estado)) return res.status(400).json({error:"estado inválido"});
-    if (canal && !CANALES.has(canal)) return res.status(400).json({error:"canal inválido"});
-    const f = parseDate(b.fecha_proxima_accion);
-    if (b.fecha_proxima_accion && f === undefined) return res.status(400).json({error:"fecha inválida"});
+    const body = req.body || {};
 
-    const r = await pool.query(
-      `INSERT INTO prospectos_sismed
-      (nombre_consultorio,ciudad,contacto_nombre,canal,contacto,fuente,estado,notas,proxima_accion,fecha_proxima_accion)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [nombre,clean(b.ciudad,120),clean(b.contacto_nombre,160),canal,clean(b.contacto,255),
-       clean(b.fuente,255),estado,clean(b.notas,4000),clean(b.proxima_accion,255),f]
+    const nombre = clean(body.nombre_consultorio, 200);
+
+    if (!nombre) {
+      return res.status(400).json({
+        error: "nombre_consultorio es obligatorio"
+      });
+    }
+
+    const estado = clean(body.estado, 30) || "nuevo";
+    const canal = clean(body.canal, 30);
+
+    if (!ESTADOS.has(estado)) {
+      return res.status(400).json({ error: "estado inválido" });
+    }
+
+    if (canal && !CANALES.has(canal)) {
+      return res.status(400).json({ error: "canal inválido" });
+    }
+
+    const fecha = parseDate(body.fecha_proxima_accion);
+
+    if (body.fecha_proxima_accion && fecha === undefined) {
+      return res.status(400).json({ error: "fecha inválida" });
+    }
+
+    const result = await pool.query(
+      `
+      INSERT INTO prospectos_sismed
+      (
+        nombre_consultorio,
+        ciudad,
+        contacto_nombre,
+        canal,
+        contacto,
+        fuente,
+        estado,
+        notas,
+        proxima_accion,
+        fecha_proxima_accion
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      RETURNING *
+      `,
+      [
+        nombre,
+        clean(body.ciudad, 120),
+        clean(body.contacto_nombre, 160),
+        canal,
+        clean(body.contacto, 255),
+        clean(body.fuente, 255),
+        estado,
+        clean(body.notas, 4000),
+        clean(body.proxima_accion, 255),
+        fecha
+      ]
     );
-    res.status(201).json(r.rows[0]);
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({error:"Error interno"});
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error interno" });
   }
 });
 
-app.get("/api/prospectos", async (req,res) => {
+app.get("/api/prospectos", async (req, res) => {
   try {
-    const estado = clean(req.query.estado,30);
-    const limite = Math.min(Math.max(Number(req.query.limite || 25),1),100);
+    const estado = clean(req.query.estado, 30);
+    const limite = Math.min(
+      Math.max(Number(req.query.limite || 25), 1),
+      100
+    );
+
     const params = [];
     let sql = "SELECT * FROM prospectos_sismed";
+
     if (estado) {
-      if (!ESTADOS.has(estado)) return res.status(400).json({error:"estado inválido"});
+      if (!ESTADOS.has(estado)) {
+        return res.status(400).json({ error: "estado inválido" });
+      }
+
       params.push(estado);
       sql += " WHERE estado = $1";
     }
+
     params.push(limite);
     sql += ` ORDER BY updated_at DESC LIMIT $${params.length}`;
-    const r = await pool.query(sql,params);
-    res.json({total:r.rows.length,prospectos:r.rows});
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({error:"Error interno"});
+
+    const result = await pool.query(sql, params);
+
+    res.json({
+      total: result.rows.length,
+      prospectos: result.rows
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error interno" });
   }
 });
 
-app.patch("/api/prospectos/:id", async (req,res) => {
+app.patch("/api/prospectos/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({error:"id inválido"});
 
-    const allowed = {
-      ciudad:[120,null], contacto_nombre:[160,null], canal:[30,"canal"], contacto:[255,null],
-      fuente:[255,null], estado:[30,"estado"], notas:[4000,null], proxima_accion:[255,null],
-      fecha_proxima_accion:[null,"fecha"]
-    };
-
-    const sets = [], values = [];
-    let n = 1;
-    for (const [k,cfg] of Object.entries(allowed)) {
-      if (!(k in req.body)) continue;
-      let v = cfg[1] === "fecha" ? parseDate(req.body[k]) : clean(req.body[k],cfg[0]);
-      if (cfg[1] === "fecha" && req.body[k] && v === undefined) return res.status(400).json({error:"fecha inválida"});
-      if (cfg[1] === "estado" && v && !ESTADOS.has(v)) return res.status(400).json({error:"estado inválido"});
-      if (cfg[1] === "canal" && v && !CANALES.has(v)) return res.status(400).json({error:"canal inválido"});
-      sets.push(`${k} = $${n++}`);
-      values.push(v);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: "id inválido" });
     }
 
-    if (!sets.length) return res.status(400).json({error:"No hay campos válidos"});
+    const allowed = {
+      ciudad: [120, null],
+      contacto_nombre: [160, null],
+      canal: [30, "canal"],
+      contacto: [255, null],
+      fuente: [255, null],
+      estado: [30, "estado"],
+      notas: [4000, null],
+      proxima_accion: [255, null],
+      fecha_proxima_accion: [null, "fecha"]
+    };
+
+    const sets = [];
+    const values = [];
+    let index = 1;
+
+    for (const [key, config] of Object.entries(allowed)) {
+      if (!(key in req.body)) continue;
+
+      let value;
+
+      if (config[1] === "fecha") {
+        value = parseDate(req.body[key]);
+
+        if (req.body[key] && value === undefined) {
+          return res.status(400).json({
+            error: "fecha inválida"
+          });
+        }
+      } else {
+        value = clean(req.body[key], config[0]);
+      }
+
+      if (
+        config[1] === "estado" &&
+        value &&
+        !ESTADOS.has(value)
+      ) {
+        return res.status(400).json({
+          error: "estado inválido"
+        });
+      }
+
+      if (
+        config[1] === "canal" &&
+        value &&
+        !CANALES.has(value)
+      ) {
+        return res.status(400).json({
+          error: "canal inválido"
+        });
+      }
+
+      sets.push(`${key} = $${index++}`);
+      values.push(value);
+    }
+
+    if (!sets.length) {
+      return res.status(400).json({
+        error: "No hay campos válidos"
+      });
+    }
+
     sets.push("updated_at = NOW()");
     values.push(id);
 
-    const r = await pool.query(
-      `UPDATE prospectos_sismed SET ${sets.join(", ")} WHERE id = $${n} RETURNING *`,
+    const result = await pool.query(
+      `
+      UPDATE prospectos_sismed
+      SET ${sets.join(", ")}
+      WHERE id = $${index}
+      RETURNING *
+      `,
       values
     );
-    if (!r.rows.length) return res.status(404).json({error:"Prospecto no encontrado"});
-    res.json(r.rows[0]);
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({error:"Error interno"});
+
+    if (!result.rows.length) {
+      return res.status(404).json({
+        error: "Prospecto no encontrado"
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error interno" });
   }
 });
 
 /* ---------- INSTAGRAM ---------- */
 
-app.get("/api/instagram/status", async (_req,res) => {
+app.get("/api/instagram/status", async (_req, res) => {
   try {
     requireInstagram();
+
     const data = await igRequest(`/${IG_ACCOUNT_ID}`, {
-      params: { fields: "id,username,account_type" }
+      params: {
+        fields: "id,username,account_type"
+      }
     });
-    res.json({conectado:true,api_version:IG_VERSION,cuenta:data});
-  } catch (e) {
-    console.error(e);
-    res.status(e.status || 502).json({conectado:false,error:e.message,detalle:e.meta || null});
+
+    res.json({
+      conectado: true,
+      api_version: IG_VERSION,
+      cuenta: data
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(error.status || 502).json({
+      conectado: false,
+      error: error.message,
+      detalle: error.meta || null
+    });
   }
 });
 
-app.post("/api/instagram/publicar-imagen", async (req,res) => {
+app.post("/api/instagram/publicar-imagen", async (req, res) => {
   try {
     const imageUrl = clean(req.body?.image_url, 2000);
     const caption = clean(req.body?.caption, 2200) || "";
-    if (!imageUrl) return res.status(400).json({error:"image_url es obligatorio"});
+
+    if (!imageUrl) {
+      return res.status(400).json({
+        error: "image_url es obligatorio"
+      });
+    }
 
     const pub = await publishImage(imageUrl, caption);
 
-    const r = await pool.query(
-      `INSERT INTO publicaciones_instagram
-       (image_url,caption,scheduled_at,status,instagram_media_id,published_at)
-       VALUES ($1,$2,NOW(),'publicada',$3,NOW()) RETURNING *`,
-      [imageUrl,caption,pub.media_id]
+    const result = await pool.query(
+      `
+      INSERT INTO publicaciones_instagram
+      (
+        image_url,
+        caption,
+        scheduled_at,
+        status,
+        instagram_media_id,
+        published_at
+      )
+      VALUES ($1,$2,NOW(),'publicada',$3,NOW())
+      RETURNING *
+      `,
+      [imageUrl, caption, pub.media_id]
     );
 
-    res.status(201).json({ok:true,instagram:pub,registro:r.rows[0]});
-  } catch (e) {
-    console.error(e);
-    res.status(502).json({error:e.message,detalle:e.meta || null});
+    res.status(201).json({
+      ok: true,
+      instagram: pub,
+      registro: result.rows[0]
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(502).json({
+      error: error.message,
+      detalle: error.meta || null
+    });
   }
 });
 
-app.post("/api/instagram/programaciones", async (req,res) => {
+app.post("/api/instagram/programaciones", async (req, res) => {
   try {
     const imageUrl = clean(req.body?.image_url, 2000);
     const caption = clean(req.body?.caption, 2200) || "";
     const scheduledAt = parseDate(req.body?.scheduled_at);
 
-    if (!imageUrl) return res.status(400).json({error:"image_url es obligatorio"});
-    if (!/^https:\/\//i.test(imageUrl)) return res.status(400).json({error:"image_url debe ser HTTPS público"});
-    if (!scheduledAt) return res.status(400).json({error:"scheduled_at es obligatorio y debe ser una fecha válida"});
+    if (!imageUrl) {
+      return res.status(400).json({
+        error: "image_url es obligatorio"
+      });
+    }
 
-    const r = await pool.query(
-      `INSERT INTO publicaciones_instagram
-       (image_url,caption,scheduled_at,status)
-       VALUES ($1,$2,$3,'programada') RETURNING *`,
-      [imageUrl,caption,scheduledAt]
+    if (!/^https:\/\//i.test(imageUrl)) {
+      return res.status(400).json({
+        error: "image_url debe ser HTTPS público"
+      });
+    }
+
+    if (!scheduledAt) {
+      return res.status(400).json({
+        error: "scheduled_at es obligatorio y debe ser una fecha válida"
+      });
+    }
+
+    const result = await pool.query(
+      `
+      INSERT INTO publicaciones_instagram
+      (
+        image_url,
+        caption,
+        scheduled_at,
+        status
+      )
+      VALUES ($1,$2,$3,'programada')
+      RETURNING *
+      `,
+      [imageUrl, caption, scheduledAt]
     );
-    res.status(201).json(r.rows[0]);
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({error:"Error interno"});
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error interno" });
   }
 });
 
-app.get("/api/instagram/programaciones", async (req,res) => {
+app.get("/api/instagram/programaciones", async (req, res) => {
   try {
-    const status = clean(req.query.status,30);
-    const limite = Math.min(Math.max(Number(req.query.limite || 25),1),100);
+    const status = clean(req.query.status, 30);
+
+    const limite = Math.min(
+      Math.max(Number(req.query.limite || 25), 1),
+      100
+    );
+
     const params = [];
     let sql = "SELECT * FROM publicaciones_instagram";
+
     if (status) {
       params.push(status);
       sql += " WHERE status = $1";
     }
+
     params.push(limite);
-    sql += ` ORDER BY scheduled_at ASC LIMIT $${params.length}`;
-    const r = await pool.query(sql,params);
-    res.json({total:r.rows.length,publicaciones:r.rows});
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({error:"Error interno"});
+
+    sql += `
+      ORDER BY scheduled_at ASC
+      LIMIT $${params.length}
+    `;
+
+    const result = await pool.query(sql, params);
+
+    res.json({
+      total: result.rows.length,
+      publicaciones: result.rows
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error interno" });
   }
 });
 
-app.post("/api/instagram/programaciones/:id/publicar", async (req,res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({error:"id inválido"});
+app.post(
+  "/api/instagram/programaciones/:id/publicar",
+  async (req, res) => {
+    try {
+      const id = Number(req.params.id);
 
-    const q = await pool.query(`SELECT * FROM publicaciones_instagram WHERE id=$1`,[id]);
-    if (!q.rows.length) return res.status(404).json({error:"Publicación no encontrada"});
-    const item = q.rows[0];
-    if (item.status === "publicada") return res.json({ok:true,ya_publicada:true,publicacion:item});
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "id inválido" });
+      }
 
-    const pub = await publishImage(item.image_url,item.caption);
-    const r = await pool.query(
-      `UPDATE publicaciones_instagram
-       SET status='publicada',instagram_media_id=$2,published_at=NOW(),error=NULL,updated_at=NOW()
-       WHERE id=$1 RETURNING *`,
-      [id,pub.media_id]
-    );
-    res.json({ok:true,instagram:pub,publicacion:r.rows[0]});
-  } catch (e) {
-    console.error(e);
-    res.status(502).json({error:e.message,detalle:e.meta || null});
-  }
-});
-
-app.post("/api/instagram/procesar-programadas", async (_req,res) => {
-  const resultados = [];
-  try {
-    const due = await pool.query(
-      `SELECT id FROM publicaciones_instagram
-       WHERE status='programada' AND scheduled_at <= NOW()
-       ORDER BY scheduled_at ASC
-       LIMIT 10`
-    );
-
-    for (const row of due.rows) {
-      const id = row.id;
-      const claim = await pool.query(
-        `UPDATE publicaciones_instagram
-         SET status='procesando',updated_at=NOW()
-         WHERE id=$1 AND status='programada'
-         RETURNING *`,
+      const query = await pool.query(
+        `
+        SELECT *
+        FROM publicaciones_instagram
+        WHERE id = $1
+        `,
         [id]
       );
-      if (!claim.rows.length) continue;
 
-      const item = claim.rows[0];
-      try {
-        const pub = await publishImage(item.image_url,item.caption);
-        const saved = await pool.query(
-          `UPDATE publicaciones_instagram
-           SET status='publicada',instagram_media_id=$2,published_at=NOW(),error=NULL,updated_at=NOW()
-           WHERE id=$1 RETURNING *`,
-          [id,pub.media_id]
-        );
-        resultados.push({id,ok:true,media_id:pub.media_id,registro:saved.rows[0]});
-      } catch (e) {
-        await pool.query(
-          `UPDATE publicaciones_instagram
-           SET status='error',error=$2,updated_at=NOW()
-           WHERE id=$1`,
-          [id,String(e.message).slice(0,4000)]
-        );
-        resultados.push({id,ok:false,error:e.message});
+      if (!query.rows.length) {
+        return res.status(404).json({
+          error: "Publicación no encontrada"
+        });
       }
-    }
 
-    res.json({ok:true,procesadas:resultados.length,resultados});
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({error:"Error procesando programaciones"});
+      const item = query.rows[0];
+
+      if (item.status === "publicada") {
+        return res.json({
+          ok: true,
+          ya_publicada: true,
+          publicacion: item
+        });
+      }
+
+      const pub = await publishImage(
+        item.image_url,
+        item.caption
+      );
+
+      const result = await pool.query(
+        `
+        UPDATE publicaciones_instagram
+        SET
+          status='publicada',
+          instagram_media_id=$2,
+          published_at=NOW(),
+          error=NULL,
+          updated_at=NOW()
+        WHERE id=$1
+        RETURNING *
+        `,
+        [id, pub.media_id]
+      );
+
+      res.json({
+        ok: true,
+        instagram: pub,
+        publicacion: result.rows[0]
+      });
+    } catch (error) {
+      console.error(error);
+
+      res.status(502).json({
+        error: error.message,
+        detalle: error.meta || null
+      });
+    }
   }
-});
+);
+
+app.post(
+  "/api/instagram/procesar-programadas",
+  async (_req, res) => {
+    const resultados = [];
+
+    try {
+      const due = await pool.query(`
+        SELECT id
+        FROM publicaciones_instagram
+        WHERE
+          status='programada'
+          AND scheduled_at <= NOW()
+        ORDER BY scheduled_at ASC
+        LIMIT 10
+      `);
+
+      for (const row of due.rows) {
+        const id = row.id;
+
+        const claim = await pool.query(
+          `
+          UPDATE publicaciones_instagram
+          SET
+            status='procesando',
+            updated_at=NOW()
+          WHERE
+            id=$1
+            AND status='programada'
+          RETURNING *
+          `,
+          [id]
+        );
+
+        if (!claim.rows.length) continue;
+
+        const item = claim.rows[0];
+
+        try {
+          const pub = await publishImage(
+            item.image_url,
+            item.caption
+          );
+
+          const saved = await pool.query(
+            `
+            UPDATE publicaciones_instagram
+            SET
+              status='publicada',
+              instagram_media_id=$2,
+              published_at=NOW(),
+              error=NULL,
+              updated_at=NOW()
+            WHERE id=$1
+            RETURNING *
+            `,
+            [id, pub.media_id]
+          );
+
+          resultados.push({
+            id,
+            ok: true,
+            media_id: pub.media_id,
+            registro: saved.rows[0]
+          });
+        } catch (error) {
+          await pool.query(
+            `
+            UPDATE publicaciones_instagram
+            SET
+              status='error',
+              error=$2,
+              updated_at=NOW()
+            WHERE id=$1
+            `,
+            [id, String(error.message).slice(0, 4000)]
+          );
+
+          resultados.push({
+            id,
+            ok: false,
+            error: error.message
+          });
+        }
+      }
+
+      res.json({
+        ok: true,
+        procesadas: resultados.length,
+        resultados
+      });
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        error: "Error procesando programaciones"
+      });
+    }
+  }
+);
 
 init()
-  .then(() => app.listen(PORT,"0.0.0.0",() => console.log(`Sismed Action v2 listening on ${PORT}`)))
-  .catch(e => { console.error(e); process.exit(1); });
+  .then(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Sismed Action v2.1 listening on ${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
