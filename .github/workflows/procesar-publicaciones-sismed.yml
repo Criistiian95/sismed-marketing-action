@@ -1,0 +1,25 @@
+name: Procesar publicaciones programadas de Sismed
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  procesar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Despertar servicio de Render
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS --max-time 30 https://sismed-marketing-action.onrender.com/health; then
+              exit 0
+            fi
+            sleep 15
+          done
+          exit 1
+
+      - name: Publicar contenidos vencidos
+        run: |
+          curl -fsS             -X POST             -H "Authorization: Bearer ${{ secrets.SISMED_ACTION_API_KEY }}"             -H "Content-Type: application/json"             https://sismed-marketing-action.onrender.com/api/instagram/procesar-programadas
