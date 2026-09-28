@@ -19,10 +19,14 @@ const IG_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
 const IG_ACCOUNT_ID = process.env.INSTAGRAM_ACCOUNT_ID;
 const IG_VERSION = process.env.INSTAGRAM_API_VERSION || "v26.0";
 const IG_BASE = `https://graph.instagram.com/${IG_VERSION}`;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2";
+const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+const CLOUDFLARE_IMAGE_MODEL =
+  process.env.CLOUDFLARE_IMAGE_MODEL ||
+  "@cf/black-forest-labs/flux-1-schnell";
 const PUBLIC_BASE_URL =
-  process.env.PUBLIC_BASE_URL || "https://sismed-marketing-action.onrender.com";
+  process.env.PUBLIC_BASE_URL ||
+  "https://sismed-marketing-action.onrender.com";
 
 if (!API_KEY || !DATABASE_URL) {
   console.error("Faltan ACTION_API_KEY o DATABASE_URL");
@@ -247,61 +251,89 @@ async function publishImage(imageUrl, caption = "") {
 }
 
 
-function requireOpenAI() {
-  if (!OPENAI_API_KEY) {
-    const err = new Error("Falta OPENAI_API_KEY en Render");
+
+function requireCloudflareAI() {
+  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) {
+    const err = new Error(
+      "Faltan CLOUDFLARE_ACCOUNT_ID o CLOUDFLARE_API_TOKEN en Render"
+    );
     err.status = 503;
     throw err;
   }
 }
 
+function qualityToSteps(quality) {
+  if (quality === "high") return 8;
+  if (quality === "medium") return 6;
+  if (quality === "low") return 4;
+  return 4;
+}
+
 async function generateMarketingImage({
   prompt,
-  size = "1024x1280",
+  size = "1024x1024",
   quality = "medium"
 }) {
-  requireOpenAI();
+  requireCloudflareAI();
 
   const allowedQualities = new Set(["low", "medium", "high", "auto"]);
   if (!allowedQualities.has(quality)) {
     throw new Error("quality inválida");
   }
 
-  if (!/^\d+x\d+$/.test(size) && size !== "auto") {
-    throw new Error("size inválido");
+  if (!prompt || prompt.length > 2048) {
+    throw new Error(
+      "El prompt debe tener entre 1 y 2048 caracteres para Cloudflare Workers AI"
+    );
   }
 
-  const response = await fetch("https://api.openai.com/v1/images/generations", {
+  const modelPath = CLOUDFLARE_IMAGE_MODEL
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/");
+
+  const endpoint =
+    `https://api.cloudflare.com/client/v4/accounts/` +
+    `${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/run/${modelPath}`;
+
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Authorization": `Bearer ${CLOUDFLARE_API_TOKEN}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: OPENAI_IMAGE_MODEL,
       prompt,
-      size,
-      quality,
-      output_format: "png",
-      n: 1
+      steps: qualityToSteps(quality)
     })
   });
 
   const data = await response.json().catch(() => ({}));
 
-  if (!response.ok) {
-    const message =
+  if (!response.ok || data.success === false) {
+    const apiMessage =
+      data?.errors?.[0]?.message ||
       data?.error?.message ||
-      `OpenAI Images API HTTP ${response.status}`;
-    const err = new Error(message);
+      `Cloudflare Workers AI HTTP ${response.status}`;
+
+    const err = new Error(apiMessage);
     err.status = response.status;
-    err.meta = data?.error || data;
+    err.meta = data;
     throw err;
   }
 
-  const b64 = data?.data?.[0]?.b64_json;
-  if (!b64) {
-    const err = new Error("OpenAI no devolvió una imagen en base64");
+  // Cloudflare's REST API normally wraps the model output in `result`.
+  // FLUX.1 Schnell returns an `image` field containing Base64 JPEG data.
+  const result = data?.result ?? data;
+  const b64 =
+    result?.image ||
+    data?.image ||
+    result?.response?.image;
+
+  if (!b64 || typeof b64 !== "string") {
+    const err = new Error(
+      "Cloudflare no devolvió la imagen esperada en Base64"
+    );
     err.meta = data;
     throw err;
   }
@@ -312,26 +344,28 @@ async function generateMarketingImage({
     `
     INSERT INTO imagenes_marketing
       (prompt, model, size, quality, mime_type, image_data)
-    VALUES ($1,$2,$3,$4,'image/png',$5)
+    VALUES ($1,$2,$3,$4,'image/jpeg',$5)
     RETURNING id, prompt, model, size, quality, mime_type, created_at
     `,
-    [prompt, OPENAI_IMAGE_MODEL, size, quality, buffer]
+    [prompt, CLOUDFLARE_IMAGE_MODEL, size, quality, buffer]
   );
 
   const image = saved.rows[0];
 
   return {
     ...image,
-    url: `${PUBLIC_BASE_URL}/media/generated/${image.id}.png`
+    provider: "cloudflare-workers-ai",
+    url: `${PUBLIC_BASE_URL}/media/generated/${image.id}.jpg`
   };
 }
 
 /* ---------- RUTAS PÚBLICAS ---------- */
 
 
-app.get("/media/generated/:id.png", async (req, res) => {
+app.get("/media/generated/:file", async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const match = String(req.params.file || "").match(/^(\d+)\.(?:png|jpg|jpeg)$/i);
+    const id = match ? Number(match[1]) : NaN;
 
     if (!Number.isInteger(id) || id <= 0) {
       return res.status(400).send("ID inválido");
@@ -365,7 +399,7 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "3.0.0"
+    version: "3.1.0"
   });
 });
 
@@ -376,7 +410,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "3.0.0"
+      version: "3.1.0"
     });
   } catch (error) {
     console.error(error);
@@ -613,7 +647,7 @@ app.patch("/api/prospectos/:id", async (req, res) => {
 
 app.post("/api/imagenes/generar", async (req, res) => {
   try {
-    const prompt = clean(req.body?.prompt, 6000);
+    const prompt = clean(req.body?.prompt, 2048);
     const size = clean(req.body?.size, 40) || "1024x1280";
     const quality = clean(req.body?.quality, 20) || "medium";
 
@@ -663,7 +697,7 @@ app.get("/api/imagenes", async (req, res) => {
       total: result.rows.length,
       imagenes: result.rows.map((item) => ({
         ...item,
-        url: `${PUBLIC_BASE_URL}/media/generated/${item.id}.png`
+        url: `${PUBLIC_BASE_URL}/media/generated/${item.id}.jpg`
       }))
     });
   } catch (error) {
@@ -901,7 +935,7 @@ app.post(
 
 app.post("/api/instagram/generar-y-programar", async (req, res) => {
   try {
-    const prompt = clean(req.body?.prompt, 6000);
+    const prompt = clean(req.body?.prompt, 2048);
     const caption = clean(req.body?.caption, 2200) || "";
     const scheduledAt = parseDate(req.body?.scheduled_at);
     const size = clean(req.body?.size, 40) || "1024x1280";
@@ -1050,7 +1084,7 @@ app.post(
 init()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Sismed Action v3.0 listening on ${PORT}`);
+      console.log(`Sismed Action v3.1 listening on ${PORT}`);
     });
   })
   .catch((error) => {
