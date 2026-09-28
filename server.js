@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const helmet = require("helmet");
 const { Pool } = require("pg");
+const sharp = require("sharp");
 
 const app = express();
 
@@ -279,10 +280,118 @@ function parseImageSize(size) {
   return { width, height };
 }
 
+
+function xmlEscape(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function wrapText(text, maxChars = 34) {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > maxChars && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+
+  if (line) lines.push(line);
+  return lines.slice(0, 5);
+}
+
+function tspanLines(lines, x, startY, lineHeight, cls) {
+  return lines.map((line, i) =>
+    `<text x="${x}" y="${startY + i * lineHeight}" class="${cls}">${xmlEscape(line)}</text>`
+  ).join("");
+}
+
+async function applySismedOverlay(buffer, {
+  title = "Organizá tu consultorio con Sismed",
+  subtitle = "",
+  bullets = [],
+  cta = "Escribinos por privado"
+} = {}) {
+  const width = 1024;
+  const height = 1280;
+
+  const titleLines = wrapText(title, 28);
+  const subtitleLines = wrapText(subtitle, 42);
+  const safeBullets = Array.isArray(bullets)
+    ? bullets.filter(Boolean).slice(0, 4)
+    : [];
+
+  let y = 205;
+  const titleSvg = tspanLines(titleLines, 76, y, 64, "title");
+  y += titleLines.length * 64 + 28;
+
+  const subtitleSvg = subtitleLines.length
+    ? tspanLines(subtitleLines, 76, y, 36, "subtitle")
+    : "";
+  y += subtitleLines.length * 36 + (subtitleLines.length ? 34 : 0);
+
+  const bulletsSvg = safeBullets.map((item, idx) => {
+    const lines = wrapText(item, 38);
+    const blockY = y + idx * 92;
+    const lineSvg = tspanLines(lines, 116, blockY, 30, "bulletText");
+    return `
+      <circle cx="86" cy="${blockY - 9}" r="12" fill="#16a36d"/>
+      <path d="M80 ${blockY-9} l5 5 l9 -11" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      ${lineSvg}
+    `;
+  }).join("");
+
+  const overlay = `
+  <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <style>
+      .brand { font-family: Arial, Helvetica, sans-serif; font-size: 54px; font-weight: 800; fill: #0f5132; }
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 58px; font-weight: 800; fill: #111827; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 28px; font-weight: 500; fill: #374151; }
+      .bulletText { font-family: Arial, Helvetica, sans-serif; font-size: 27px; font-weight: 600; fill: #1f2937; }
+      .cta { font-family: Arial, Helvetica, sans-serif; font-size: 30px; font-weight: 800; fill: white; }
+    </style>
+
+    <!-- Panel para asegurar legibilidad -->
+    <rect x="38" y="36" width="620" height="1160" rx="34" fill="white" fill-opacity="0.92"/>
+
+    <!-- Marca simple SISMED -->
+    <rect x="76" y="78" width="58" height="22" rx="7" fill="#16a36d"/>
+    <rect x="94" y="60" width="22" height="58" rx="7" fill="#16a36d"/>
+    <text x="150" y="107" class="brand">SISMED</text>
+
+    ${titleSvg}
+    ${subtitleSvg}
+    ${bulletsSvg}
+
+    <!-- CTA -->
+    <rect x="76" y="1088" width="390" height="74" rx="28" fill="#16a36d"/>
+    <text x="271" y="1137" text-anchor="middle" class="cta">${xmlEscape(cta)}</text>
+  </svg>`;
+
+  return sharp(buffer)
+    .resize(width, height, { fit: "cover" })
+    .composite([{ input: Buffer.from(overlay) }])
+    .jpeg({ quality: 94, chromaSubsampling: "4:4:4" })
+    .toBuffer();
+}
+
 async function generateMarketingImage({
   prompt,
-  size = "1024x1024",
-  quality = "medium"
+  size = "1024x1280",
+  quality = "medium",
+  title = "Organizá tu consultorio con Sismed",
+  subtitle = "",
+  bullets = [],
+  cta = "Escribinos por privado"
 }) {
   requireCloudflareAI();
 
@@ -311,9 +420,12 @@ async function generateMarketingImage({
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      prompt,
-      width: parseImageSize(size).width,
-      height: parseImageSize(size).height,
+      prompt:
+        `${prompt}. IMPORTANT: generate only the visual background and scene. ` +
+        `Do not include any text, letters, words, logos, captions, UI labels or typography. ` +
+        `Leave clean negative space on the left side for a professional marketing overlay.`,
+      width: 1024,
+      height: 1280,
       guidance: 5.5,
       num_steps: qualityToSteps(quality)
     })
@@ -349,7 +461,14 @@ async function generateMarketingImage({
     throw err;
   }
 
-  const buffer = Buffer.from(b64, "base64");
+  const rawBuffer = Buffer.from(b64, "base64");
+
+  const finalBuffer = await applySismedOverlay(rawBuffer, {
+    title,
+    subtitle,
+    bullets,
+    cta
+  });
 
   const saved = await pool.query(
     `
@@ -358,7 +477,7 @@ async function generateMarketingImage({
     VALUES ($1,$2,$3,$4,'image/jpeg',$5)
     RETURNING id, prompt, model, size, quality, mime_type, created_at
     `,
-    [prompt, CLOUDFLARE_IMAGE_MODEL, size, quality, buffer]
+    [prompt, CLOUDFLARE_IMAGE_MODEL, "1024x1280", quality, finalBuffer]
   );
 
   const image = saved.rows[0];
@@ -410,7 +529,7 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "3.2.0"
+    version: "3.3.0"
   });
 });
 
@@ -421,7 +540,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "3.2.0"
+      version: "3.3.0"
     });
   } catch (error) {
     console.error(error);
@@ -661,6 +780,12 @@ app.post("/api/imagenes/generar", async (req, res) => {
     const prompt = clean(req.body?.prompt, 2048);
     const size = clean(req.body?.size, 40) || "1024x1280";
     const quality = clean(req.body?.quality, 20) || "medium";
+    const title = clean(req.body?.title, 180) || "Organizá tu consultorio con Sismed";
+    const subtitle = clean(req.body?.subtitle, 320) || "";
+    const bullets = Array.isArray(req.body?.bullets)
+      ? req.body.bullets.map(x => clean(x, 140)).filter(Boolean).slice(0,4)
+      : [];
+    const cta = clean(req.body?.cta, 80) || "Escribinos por privado";
 
     if (!prompt) {
       return res.status(400).json({
@@ -671,7 +796,11 @@ app.post("/api/imagenes/generar", async (req, res) => {
     const image = await generateMarketingImage({
       prompt,
       size,
-      quality
+      quality,
+      title,
+      subtitle,
+      bullets,
+      cta
     });
 
     res.status(201).json({
@@ -951,6 +1080,12 @@ app.post("/api/instagram/generar-y-programar", async (req, res) => {
     const scheduledAt = parseDate(req.body?.scheduled_at);
     const size = clean(req.body?.size, 40) || "1024x1280";
     const quality = clean(req.body?.quality, 20) || "medium";
+    const title = clean(req.body?.title, 180) || "Organizá tu consultorio con Sismed";
+    const subtitle = clean(req.body?.subtitle, 320) || "";
+    const bullets = Array.isArray(req.body?.bullets)
+      ? req.body.bullets.map(x => clean(x, 140)).filter(Boolean).slice(0,4)
+      : [];
+    const cta = clean(req.body?.cta, 80) || "Escribinos por privado";
 
     if (!prompt) {
       return res.status(400).json({ error: "prompt es obligatorio" });
@@ -965,7 +1100,11 @@ app.post("/api/instagram/generar-y-programar", async (req, res) => {
     const image = await generateMarketingImage({
       prompt,
       size,
-      quality
+      quality,
+      title,
+      subtitle,
+      bullets,
+      cta
     });
 
     const result = await pool.query(
@@ -1095,7 +1234,7 @@ app.post(
 init()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Sismed Action v3.2 listening on ${PORT}`);
+      console.log(`Sismed Action v3.3 listening on ${PORT}`);
     });
   })
   .catch((error) => {

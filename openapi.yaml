@@ -1,64 +1,18 @@
 openapi: 3.1.0
 info:
   title: Sismed Marketing API
-  version: 3.0.0
-  description: >
-    API para prospectos, imágenes de marketing y publicaciones de Instagram de Sismed.
-    Nunca debe almacenar datos clínicos ni datos de pacientes.
+  version: 3.3.0
 servers:
   - url: https://sismed-marketing-action.onrender.com
 paths:
-  /api/prospectos:
-    post:
-      operationId: crearProspecto
-      summary: Registrar un nuevo consultorio potencial
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/NuevoProspecto' }
-      responses:
-        '201': { description: Prospecto creado }
-    get:
-      operationId: listarProspectos
-      summary: Listar prospectos comerciales
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - name: estado
-          in: query
-          schema: { $ref: '#/components/schemas/Estado' }
-        - name: limite
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
-      responses:
-        '200': { description: Lista de prospectos }
-
-  /api/prospectos/{id}:
-    patch:
-      operationId: actualizarProspecto
-      summary: Actualizar un prospecto
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer, minimum: 1 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ActualizacionProspecto' }
-      responses:
-        '200': { description: Prospecto actualizado }
-
   /api/imagenes/generar:
     post:
       operationId: generarImagenMarketing
-      summary: Generar una imagen de marketing y obtener una URL pública
+      summary: Generar publicidad visual para Sismed con texto exacto en español
       description: >
-        Genera una imagen mediante OpenAI y la guarda en el almacenamiento de Sismed.
-        Usar esta operación cuando la imagen necesite publicarse o programarse automáticamente.
+        Genera un fondo visual con IA sin texto y luego agrega titular, subtítulo,
+        beneficios y CTA de forma determinística. Usar esta acción para imágenes
+        destinadas a Instagram o marketing.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -67,26 +21,42 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [prompt]
+              required: [prompt, title]
               properties:
                 prompt:
                   type: string
-                  maxLength: 6000
+                  maxLength: 2048
+                  description: Descripción visual del fondo. No incluir instrucciones para renderizar texto.
+                title:
+                  type: string
+                  maxLength: 180
+                subtitle:
+                  type: string
+                  maxLength: 320
+                bullets:
+                  type: array
+                  maxItems: 4
+                  items:
+                    type: string
+                    maxLength: 140
+                cta:
+                  type: string
+                  maxLength: 80
+                  default: Escribinos por privado
                 size:
                   type: string
                   default: 1024x1280
-                  description: Resolución WIDTHxHEIGHT. 1024x1280 es formato 4:5 para Instagram.
                 quality:
                   type: string
                   enum: [low, medium, high, auto]
-                  default: medium
+                  default: high
       responses:
         '201': { description: Imagen generada y alojada }
 
   /api/imagenes:
     get:
       operationId: listarImagenesMarketing
-      summary: Listar imágenes de marketing generadas
+      summary: Listar imágenes generadas
       security: [{ bearerAuth: [] }]
       parameters:
         - name: limite
@@ -107,7 +77,6 @@ paths:
     post:
       operationId: publicarImagenInstagram
       summary: Publicar inmediatamente una imagen aprobada
-      description: Usar solo si el usuario pidió explícitamente publicar ahora.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -126,7 +95,7 @@ paths:
   /api/instagram/programaciones:
     post:
       operationId: programarPublicacionInstagram
-      summary: Programar una imagen pública existente
+      summary: Programar una imagen pública
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -139,14 +108,12 @@ paths:
               properties:
                 image_url: { type: string, format: uri }
                 caption: { type: string, maxLength: 2200 }
-                scheduled_at:
-                  type: string
-                  format: date-time
+                scheduled_at: { type: string, format: date-time }
       responses:
-        '201': { description: Publicación programada }
+        '201': { description: Programación creada }
     get:
       operationId: listarPublicacionesInstagram
-      summary: Listar publicaciones de Instagram
+      summary: Listar publicaciones
       security: [{ bearerAuth: [] }]
       parameters:
         - name: status
@@ -163,10 +130,7 @@ paths:
   /api/instagram/generar-y-programar:
     post:
       operationId: generarYProgramarInstagram
-      summary: Generar una imagen de marketing y programarla en Instagram
-      description: >
-        Genera una imagen con IA, la aloja públicamente y crea una programación de Instagram.
-        Usar cuando el usuario pida explícitamente crear y programar una publicidad.
+      summary: Generar publicidad con texto exacto y programarla en Instagram
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -175,11 +139,27 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [prompt, scheduled_at]
+              required: [prompt, title, scheduled_at]
               properties:
                 prompt:
                   type: string
-                  maxLength: 6000
+                  maxLength: 2048
+                title:
+                  type: string
+                  maxLength: 180
+                subtitle:
+                  type: string
+                  maxLength: 320
+                bullets:
+                  type: array
+                  maxItems: 4
+                  items:
+                    type: string
+                    maxLength: 140
+                cta:
+                  type: string
+                  maxLength: 80
+                  default: Escribinos por privado
                 caption:
                   type: string
                   maxLength: 2200
@@ -192,9 +172,9 @@ paths:
                 quality:
                   type: string
                   enum: [low, medium, high, auto]
-                  default: medium
+                  default: high
       responses:
-        '201': { description: Imagen generada y publicación programada }
+        '201': { description: Imagen generada y programación creada }
 
   /api/instagram/programaciones/{id}/publicar:
     post:
@@ -209,47 +189,60 @@ paths:
       responses:
         '200': { description: Publicación realizada }
 
+  /api/prospectos:
+    post:
+      operationId: crearProspecto
+      summary: Registrar un prospecto
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nombre_consultorio]
+              properties:
+                nombre_consultorio: { type: string }
+                ciudad: { type: string }
+                contacto_nombre: { type: string }
+                canal: { type: string }
+                contacto: { type: string }
+                fuente: { type: string }
+                estado: { type: string }
+                notas: { type: string }
+                proxima_accion: { type: string }
+                fecha_proxima_accion: { type: string, format: date-time }
+      responses:
+        '201': { description: Prospecto creado }
+    get:
+      operationId: listarProspectos
+      summary: Listar prospectos
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Lista de prospectos }
+
+  /api/prospectos/{id}:
+    patch:
+      operationId: actualizarProspecto
+      summary: Actualizar prospecto
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { description: Prospecto actualizado }
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-
-  schemas:
-    Estado:
-      type: string
-      enum: [nuevo, contactado, respondio, interesado, piloto, descartado]
-
-    Canal:
-      type: string
-      enum: [instagram, facebook, whatsapp, email, telefono, linkedin, web, visita, otro]
-
-    NuevoProspecto:
-      type: object
-      additionalProperties: false
-      required: [nombre_consultorio]
-      properties:
-        nombre_consultorio: { type: string, maxLength: 200 }
-        ciudad: { type: string, maxLength: 120 }
-        contacto_nombre: { type: string, maxLength: 160 }
-        canal: { $ref: '#/components/schemas/Canal' }
-        contacto: { type: string, maxLength: 255 }
-        fuente: { type: string, maxLength: 255 }
-        estado: { $ref: '#/components/schemas/Estado' }
-        notas: { type: string, maxLength: 4000 }
-        proxima_accion: { type: string, maxLength: 255 }
-        fecha_proxima_accion: { type: string, format: date-time }
-
-    ActualizacionProspecto:
-      type: object
-      additionalProperties: false
-      properties:
-        ciudad: { type: string, maxLength: 120 }
-        contacto_nombre: { type: string, maxLength: 160 }
-        canal: { $ref: '#/components/schemas/Canal' }
-        contacto: { type: string, maxLength: 255 }
-        fuente: { type: string, maxLength: 255 }
-        estado: { $ref: '#/components/schemas/Estado' }
-        notas: { type: string, maxLength: 4000 }
-        proxima_accion: { type: string, maxLength: 255 }
-        fecha_proxima_accion: { type: string, format: date-time }
