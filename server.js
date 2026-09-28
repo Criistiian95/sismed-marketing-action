@@ -287,14 +287,12 @@ async function generateMarketingImage({
     );
   }
 
-  const modelPath = CLOUDFLARE_IMAGE_MODEL
-    .split("/")
-    .map(encodeURIComponent)
-    .join("/");
-
+  // Cloudflare espera el modelo literalmente en la ruta:
+  // /ai/run/@cf/black-forest-labs/flux-1-schnell
   const endpoint =
     `https://api.cloudflare.com/client/v4/accounts/` +
-    `${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/run/${modelPath}`;
+    `${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/run/` +
+    `${CLOUDFLARE_IMAGE_MODEL}`;
 
   const response = await fetch(endpoint, {
     method: "POST",
@@ -399,7 +397,7 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "3.1.0"
+    version: "3.1.1"
   });
 });
 
@@ -410,7 +408,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "3.1.0"
+      version: "3.1.1"
     });
   } catch (error) {
     console.error(error);
@@ -1084,7 +1082,7 @@ app.post(
 init()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Sismed Action v3.1 listening on ${PORT}`);
+      console.log(`Sismed Action v3.1.1 listening on ${PORT}`);
     });
   })
   .catch((error) => {
