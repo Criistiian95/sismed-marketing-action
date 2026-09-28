@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Sismed Marketing API
-  version: 2.0.0
+  version: 3.0.0
   description: >
-    API para gestionar prospectos comerciales y publicaciones de Instagram de Sismed.
+    API para prospectos, imágenes de marketing y publicaciones de Instagram de Sismed.
     Nunca debe almacenar datos clínicos ni datos de pacientes.
 servers:
   - url: https://sismed-marketing-action.onrender.com
@@ -20,7 +20,6 @@ paths:
             schema: { $ref: '#/components/schemas/NuevoProspecto' }
       responses:
         '201': { description: Prospecto creado }
-        '400': { description: Datos inválidos }
     get:
       operationId: listarProspectos
       summary: Listar prospectos comerciales
@@ -53,21 +52,62 @@ paths:
       responses:
         '200': { description: Prospecto actualizado }
 
+  /api/imagenes/generar:
+    post:
+      operationId: generarImagenMarketing
+      summary: Generar una imagen de marketing y obtener una URL pública
+      description: >
+        Genera una imagen mediante OpenAI y la guarda en el almacenamiento de Sismed.
+        Usar esta operación cuando la imagen necesite publicarse o programarse automáticamente.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                  maxLength: 6000
+                size:
+                  type: string
+                  default: 1024x1280
+                  description: Resolución WIDTHxHEIGHT. 1024x1280 es formato 4:5 para Instagram.
+                quality:
+                  type: string
+                  enum: [low, medium, high, auto]
+                  default: medium
+      responses:
+        '201': { description: Imagen generada y alojada }
+
+  /api/imagenes:
+    get:
+      operationId: listarImagenesMarketing
+      summary: Listar imágenes de marketing generadas
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limite
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200': { description: Lista de imágenes }
+
   /api/instagram/status:
     get:
       operationId: verificarInstagram
-      summary: Verificar que la cuenta de Instagram y el token estén conectados
+      summary: Verificar conexión con Instagram
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Estado de conexión de Instagram }
+        '200': { description: Estado de conexión }
 
   /api/instagram/publicar-imagen:
     post:
       operationId: publicarImagenInstagram
-      summary: Publicar inmediatamente una imagen aprobada en Instagram
-      description: >
-        Usar solamente cuando el usuario haya pedido explícitamente publicar ahora.
-        image_url debe ser una URL HTTPS pública accesible por Meta.
+      summary: Publicar inmediatamente una imagen aprobada
+      description: Usar solo si el usuario pidió explícitamente publicar ahora.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -78,24 +118,15 @@ paths:
               additionalProperties: false
               required: [image_url]
               properties:
-                image_url:
-                  type: string
-                  format: uri
-                caption:
-                  type: string
-                  maxLength: 2200
+                image_url: { type: string, format: uri }
+                caption: { type: string, maxLength: 2200 }
       responses:
         '201': { description: Imagen publicada }
-        '400': { description: Datos inválidos }
-        '502': { description: Error de Instagram }
 
   /api/instagram/programaciones:
     post:
       operationId: programarPublicacionInstagram
-      summary: Programar una imagen aprobada para Instagram
-      description: >
-        Guarda la publicación para procesarla en la fecha indicada.
-        No usar sin aprobación explícita del usuario.
+      summary: Programar una imagen pública existente
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -106,21 +137,16 @@ paths:
               additionalProperties: false
               required: [image_url, scheduled_at]
               properties:
-                image_url:
-                  type: string
-                  format: uri
-                caption:
-                  type: string
-                  maxLength: 2200
+                image_url: { type: string, format: uri }
+                caption: { type: string, maxLength: 2200 }
                 scheduled_at:
                   type: string
                   format: date-time
-                  description: Fecha y hora ISO 8601 con zona horaria.
       responses:
         '201': { description: Publicación programada }
     get:
       operationId: listarPublicacionesInstagram
-      summary: Listar publicaciones de Instagram guardadas o programadas
+      summary: Listar publicaciones de Instagram
       security: [{ bearerAuth: [] }]
       parameters:
         - name: status
@@ -134,11 +160,46 @@ paths:
       responses:
         '200': { description: Lista de publicaciones }
 
+  /api/instagram/generar-y-programar:
+    post:
+      operationId: generarYProgramarInstagram
+      summary: Generar una imagen de marketing y programarla en Instagram
+      description: >
+        Genera una imagen con IA, la aloja públicamente y crea una programación de Instagram.
+        Usar cuando el usuario pida explícitamente crear y programar una publicidad.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [prompt, scheduled_at]
+              properties:
+                prompt:
+                  type: string
+                  maxLength: 6000
+                caption:
+                  type: string
+                  maxLength: 2200
+                scheduled_at:
+                  type: string
+                  format: date-time
+                size:
+                  type: string
+                  default: 1024x1280
+                quality:
+                  type: string
+                  enum: [low, medium, high, auto]
+                  default: medium
+      responses:
+        '201': { description: Imagen generada y publicación programada }
+
   /api/instagram/programaciones/{id}/publicar:
     post:
       operationId: publicarProgramacionInstagram
-      summary: Publicar manualmente una programación existente
-      description: Usar solo con aprobación explícita del usuario.
+      summary: Publicar manualmente una programación
       security: [{ bearerAuth: [] }]
       parameters:
         - name: id
@@ -175,10 +236,7 @@ components:
         contacto: { type: string, maxLength: 255 }
         fuente: { type: string, maxLength: 255 }
         estado: { $ref: '#/components/schemas/Estado' }
-        notas:
-          type: string
-          maxLength: 4000
-          description: Solo notas comerciales.
+        notas: { type: string, maxLength: 4000 }
         proxima_accion: { type: string, maxLength: 255 }
         fecha_proxima_accion: { type: string, format: date-time }
 

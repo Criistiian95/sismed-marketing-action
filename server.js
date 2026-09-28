@@ -19,6 +19,10 @@ const IG_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
 const IG_ACCOUNT_ID = process.env.INSTAGRAM_ACCOUNT_ID;
 const IG_VERSION = process.env.INSTAGRAM_API_VERSION || "v26.0";
 const IG_BASE = `https://graph.instagram.com/${IG_VERSION}`;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2";
+const PUBLIC_BASE_URL =
+  process.env.PUBLIC_BASE_URL || "https://sismed-marketing-action.onrender.com";
 
 if (!API_KEY || !DATABASE_URL) {
   console.error("Faltan ACTION_API_KEY o DATABASE_URL");
@@ -100,6 +104,19 @@ async function init() {
       published_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS imagenes_marketing (
+      id BIGSERIAL PRIMARY KEY,
+      prompt TEXT NOT NULL,
+      model VARCHAR(100) NOT NULL,
+      size VARCHAR(40) NOT NULL,
+      quality VARCHAR(20) NOT NULL,
+      mime_type VARCHAR(80) NOT NULL DEFAULT 'image/png',
+      image_data BYTEA NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
 
@@ -229,13 +246,126 @@ async function publishImage(imageUrl, caption = "") {
   };
 }
 
+
+function requireOpenAI() {
+  if (!OPENAI_API_KEY) {
+    const err = new Error("Falta OPENAI_API_KEY en Render");
+    err.status = 503;
+    throw err;
+  }
+}
+
+async function generateMarketingImage({
+  prompt,
+  size = "1024x1280",
+  quality = "medium"
+}) {
+  requireOpenAI();
+
+  const allowedQualities = new Set(["low", "medium", "high", "auto"]);
+  if (!allowedQualities.has(quality)) {
+    throw new Error("quality inválida");
+  }
+
+  if (!/^\d+x\d+$/.test(size) && size !== "auto") {
+    throw new Error("size inválido");
+  }
+
+  const response = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: OPENAI_IMAGE_MODEL,
+      prompt,
+      size,
+      quality,
+      output_format: "png",
+      n: 1
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message =
+      data?.error?.message ||
+      `OpenAI Images API HTTP ${response.status}`;
+    const err = new Error(message);
+    err.status = response.status;
+    err.meta = data?.error || data;
+    throw err;
+  }
+
+  const b64 = data?.data?.[0]?.b64_json;
+  if (!b64) {
+    const err = new Error("OpenAI no devolvió una imagen en base64");
+    err.meta = data;
+    throw err;
+  }
+
+  const buffer = Buffer.from(b64, "base64");
+
+  const saved = await pool.query(
+    `
+    INSERT INTO imagenes_marketing
+      (prompt, model, size, quality, mime_type, image_data)
+    VALUES ($1,$2,$3,$4,'image/png',$5)
+    RETURNING id, prompt, model, size, quality, mime_type, created_at
+    `,
+    [prompt, OPENAI_IMAGE_MODEL, size, quality, buffer]
+  );
+
+  const image = saved.rows[0];
+
+  return {
+    ...image,
+    url: `${PUBLIC_BASE_URL}/media/generated/${image.id}.png`
+  };
+}
+
 /* ---------- RUTAS PÚBLICAS ---------- */
+
+
+app.get("/media/generated/:id.png", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).send("ID inválido");
+    }
+
+    const result = await pool.query(
+      `
+      SELECT mime_type, image_data
+      FROM imagenes_marketing
+      WHERE id = $1
+      `,
+      [id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).send("Imagen no encontrada");
+    }
+
+    const item = result.rows[0];
+
+    res.set("Content-Type", item.mime_type || "image/png");
+    res.set("Cache-Control", "public, max-age=31536000, immutable");
+    res.send(item.image_data);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send("Error interno");
+  }
+});
 
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "2.1.0"
+    version: "3.0.0"
   });
 });
 
@@ -246,7 +376,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "2.1.0"
+      version: "3.0.0"
     });
   } catch (error) {
     console.error(error);
@@ -472,6 +602,70 @@ app.patch("/api/prospectos/:id", async (req, res) => {
     }
 
     res.json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+
+/* ---------- IMÁGENES DE MARKETING ---------- */
+
+app.post("/api/imagenes/generar", async (req, res) => {
+  try {
+    const prompt = clean(req.body?.prompt, 6000);
+    const size = clean(req.body?.size, 40) || "1024x1280";
+    const quality = clean(req.body?.quality, 20) || "medium";
+
+    if (!prompt) {
+      return res.status(400).json({
+        error: "prompt es obligatorio"
+      });
+    }
+
+    const image = await generateMarketingImage({
+      prompt,
+      size,
+      quality
+    });
+
+    res.status(201).json({
+      ok: true,
+      imagen: image
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 502).json({
+      error: error.message,
+      detalle: error.meta || null
+    });
+  }
+});
+
+app.get("/api/imagenes", async (req, res) => {
+  try {
+    const limite = Math.min(
+      Math.max(Number(req.query.limite || 20), 1),
+      100
+    );
+
+    const result = await pool.query(
+      `
+      SELECT id, prompt, model, size, quality, mime_type, created_at
+      FROM imagenes_marketing
+      ORDER BY created_at DESC
+      LIMIT $1
+      `,
+      [limite]
+    );
+
+    res.json({
+      total: result.rows.length,
+      imagenes: result.rows.map((item) => ({
+        ...item,
+        url: `${PUBLIC_BASE_URL}/media/generated/${item.id}.png`
+      }))
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Error interno" });
@@ -704,6 +898,55 @@ app.post(
   }
 );
 
+
+app.post("/api/instagram/generar-y-programar", async (req, res) => {
+  try {
+    const prompt = clean(req.body?.prompt, 6000);
+    const caption = clean(req.body?.caption, 2200) || "";
+    const scheduledAt = parseDate(req.body?.scheduled_at);
+    const size = clean(req.body?.size, 40) || "1024x1280";
+    const quality = clean(req.body?.quality, 20) || "medium";
+
+    if (!prompt) {
+      return res.status(400).json({ error: "prompt es obligatorio" });
+    }
+
+    if (!scheduledAt) {
+      return res.status(400).json({
+        error: "scheduled_at es obligatorio y debe ser una fecha válida"
+      });
+    }
+
+    const image = await generateMarketingImage({
+      prompt,
+      size,
+      quality
+    });
+
+    const result = await pool.query(
+      `
+      INSERT INTO publicaciones_instagram
+        (image_url, caption, scheduled_at, status)
+      VALUES ($1,$2,$3,'programada')
+      RETURNING *
+      `,
+      [image.url, caption, scheduledAt]
+    );
+
+    res.status(201).json({
+      ok: true,
+      imagen: image,
+      programacion: result.rows[0]
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 502).json({
+      error: error.message,
+      detalle: error.meta || null
+    });
+  }
+});
+
 app.post(
   "/api/instagram/procesar-programadas",
   async (_req, res) => {
@@ -807,7 +1050,7 @@ app.post(
 init()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Sismed Action v2.1 listening on ${PORT}`);
+      console.log(`Sismed Action v3.0 listening on ${PORT}`);
     });
   })
   .catch((error) => {
