@@ -23,7 +23,7 @@ const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const CLOUDFLARE_IMAGE_MODEL =
   process.env.CLOUDFLARE_IMAGE_MODEL ||
-  "@cf/black-forest-labs/flux-1-schnell";
+  "@cf/leonardo/lucid-origin";
 const PUBLIC_BASE_URL =
   process.env.PUBLIC_BASE_URL ||
   "https://sismed-marketing-action.onrender.com";
@@ -263,10 +263,20 @@ function requireCloudflareAI() {
 }
 
 function qualityToSteps(quality) {
-  if (quality === "high") return 8;
-  if (quality === "medium") return 6;
-  if (quality === "low") return 4;
-  return 4;
+  if (quality === "high") return 32;
+  if (quality === "medium") return 26;
+  if (quality === "low") return 18;
+  return 26;
+}
+
+function parseImageSize(size) {
+  const match = String(size || "").match(/^(\d+)x(\d+)$/);
+  if (!match) return { width: 1024, height: 1280 };
+
+  const width = Math.min(Math.max(Number(match[1]), 512), 2500);
+  const height = Math.min(Math.max(Number(match[2]), 512), 2500);
+
+  return { width, height };
 }
 
 async function generateMarketingImage({
@@ -302,7 +312,10 @@ async function generateMarketingImage({
     },
     body: JSON.stringify({
       prompt,
-      steps: qualityToSteps(quality)
+      width: parseImageSize(size).width,
+      height: parseImageSize(size).height,
+      guidance: 5.5,
+      num_steps: qualityToSteps(quality)
     })
   });
 
@@ -321,7 +334,7 @@ async function generateMarketingImage({
   }
 
   // Cloudflare's REST API normally wraps the model output in `result`.
-  // FLUX.1 Schnell returns an `image` field containing Base64 JPEG data.
+  // Lucid Origin returns an `image` field containing Base64 image data.
   const result = data?.result ?? data;
   const b64 =
     result?.image ||
@@ -397,7 +410,7 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "3.1.1"
+    version: "3.2.0"
   });
 });
 
@@ -408,7 +421,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "3.1.1"
+      version: "3.2.0"
     });
   } catch (error) {
     console.error(error);
@@ -1082,7 +1095,7 @@ app.post(
 init()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Sismed Action v3.1.1 listening on ${PORT}`);
+      console.log(`Sismed Action v3.2 listening on ${PORT}`);
     });
   })
   .catch((error) => {

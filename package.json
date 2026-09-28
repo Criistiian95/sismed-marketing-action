@@ -1,8 +1,8 @@
 {
   "name": "sismed-marketing-action",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
-  "description": "CRM, Cloudflare Workers AI e Instagram para Sismed Marketing IA.",
+  "description": "CRM, generaci\u00f3n de im\u00e1genes de alta calidad e Instagram para Sismed Marketing IA.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
