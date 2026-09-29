@@ -1,8 +1,8 @@
 {
   "name": "sismed-marketing-action",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
-  "description": "Sismed Marketing IA con generaci\u00f3n visual y composici\u00f3n exacta de textos.",
+  "description": "Sismed Marketing IA con generaci\u00f3n h\u00edbrida econ\u00f3mica/premium e Instagram.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

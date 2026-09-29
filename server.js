@@ -22,7 +22,12 @@ const IG_VERSION = process.env.INSTAGRAM_API_VERSION || "v26.0";
 const IG_BASE = `https://graph.instagram.com/${IG_VERSION}`;
 const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
-const CLOUDFLARE_IMAGE_MODEL =
+const CLOUDFLARE_IMAGE_MODEL_FAST =
+  process.env.CLOUDFLARE_IMAGE_MODEL_FAST ||
+  "@cf/black-forest-labs/flux-1-schnell";
+
+const CLOUDFLARE_IMAGE_MODEL_PREMIUM =
+  process.env.CLOUDFLARE_IMAGE_MODEL_PREMIUM ||
   process.env.CLOUDFLARE_IMAGE_MODEL ||
   "@cf/leonardo/lucid-origin";
 const PUBLIC_BASE_URL =
@@ -263,11 +268,15 @@ function requireCloudflareAI() {
   }
 }
 
-function qualityToSteps(quality) {
-  if (quality === "high") return 32;
-  if (quality === "medium") return 26;
-  if (quality === "low") return 18;
-  return 26;
+function premiumSteps(quality) {
+  if (quality === "high") return 18;
+  if (quality === "medium") return 14;
+  if (quality === "low") return 10;
+  return 14;
+}
+
+function normalizeGenerationMode(mode) {
+  return mode === "premium" ? "premium" : "economy";
 }
 
 function parseImageSize(size) {
@@ -361,7 +370,7 @@ async function applySismedOverlay(buffer, {
     </style>
 
     <!-- Panel para asegurar legibilidad -->
-    <rect x="38" y="36" width="620" height="1160" rx="34" fill="white" fill-opacity="0.92"/>
+    <rect x="38" y="36" width="620" height="1160" rx="34" fill="white" fill-opacity="1"/>
 
     <!-- Marca simple SISMED -->
     <rect x="76" y="78" width="58" height="22" rx="7" fill="#16a36d"/>
@@ -388,6 +397,7 @@ async function generateMarketingImage({
   prompt,
   size = "1024x1280",
   quality = "medium",
+  mode = "economy",
   title = "Organizá tu consultorio con Sismed",
   subtitle = "",
   bullets = [],
@@ -408,10 +418,36 @@ async function generateMarketingImage({
 
   // Cloudflare espera el modelo literalmente en la ruta:
   // /ai/run/@cf/black-forest-labs/flux-1-schnell
+  const generationMode = normalizeGenerationMode(mode);
+  const selectedModel =
+    generationMode === "premium"
+      ? CLOUDFLARE_IMAGE_MODEL_PREMIUM
+      : CLOUDFLARE_IMAGE_MODEL_FAST;
+
   const endpoint =
     `https://api.cloudflare.com/client/v4/accounts/` +
     `${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/run/` +
-    `${CLOUDFLARE_IMAGE_MODEL}`;
+    `${selectedModel}`;
+
+  const backgroundPrompt =
+    `${prompt}. Professional medical technology advertising background. ` +
+    `IMPORTANT: generate only the visual background and scene. ` +
+    `Do not include any text, letters, words, logos, captions, UI labels, signs or typography. ` +
+    `Keep the subject mainly on the right side. Leave the left side visually simple.`;
+
+  const requestBody =
+    generationMode === "premium"
+      ? {
+          prompt: backgroundPrompt,
+          width: 1024,
+          height: 1280,
+          guidance: 5.5,
+          num_steps: premiumSteps(quality)
+        }
+      : {
+          prompt: backgroundPrompt,
+          steps: 4
+        };
 
   const response = await fetch(endpoint, {
     method: "POST",
@@ -419,16 +455,7 @@ async function generateMarketingImage({
       "Authorization": `Bearer ${CLOUDFLARE_API_TOKEN}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      prompt:
-        `${prompt}. IMPORTANT: generate only the visual background and scene. ` +
-        `Do not include any text, letters, words, logos, captions, UI labels or typography. ` +
-        `Leave clean negative space on the left side for a professional marketing overlay.`,
-      width: 1024,
-      height: 1280,
-      guidance: 5.5,
-      num_steps: qualityToSteps(quality)
-    })
+    body: JSON.stringify(requestBody)
   });
 
   const data = await response.json().catch(() => ({}));
@@ -477,7 +504,7 @@ async function generateMarketingImage({
     VALUES ($1,$2,$3,$4,'image/jpeg',$5)
     RETURNING id, prompt, model, size, quality, mime_type, created_at
     `,
-    [prompt, CLOUDFLARE_IMAGE_MODEL, "1024x1280", quality, finalBuffer]
+    [prompt, selectedModel, "1024x1280", quality, finalBuffer]
   );
 
   const image = saved.rows[0];
@@ -485,6 +512,8 @@ async function generateMarketingImage({
   return {
     ...image,
     provider: "cloudflare-workers-ai",
+    mode: generationMode,
+    model: selectedModel,
     url: `${PUBLIC_BASE_URL}/media/generated/${image.id}.jpg`
   };
 }
@@ -529,7 +558,7 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "3.3.0"
+    version: "3.4.0"
   });
 });
 
@@ -540,7 +569,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "3.3.0"
+      version: "3.4.0"
     });
   } catch (error) {
     console.error(error);
@@ -780,6 +809,7 @@ app.post("/api/imagenes/generar", async (req, res) => {
     const prompt = clean(req.body?.prompt, 2048);
     const size = clean(req.body?.size, 40) || "1024x1280";
     const quality = clean(req.body?.quality, 20) || "medium";
+    const mode = clean(req.body?.mode, 20) || "economy";
     const title = clean(req.body?.title, 180) || "Organizá tu consultorio con Sismed";
     const subtitle = clean(req.body?.subtitle, 320) || "";
     const bullets = Array.isArray(req.body?.bullets)
@@ -797,6 +827,7 @@ app.post("/api/imagenes/generar", async (req, res) => {
       prompt,
       size,
       quality,
+      mode,
       title,
       subtitle,
       bullets,
@@ -1080,6 +1111,7 @@ app.post("/api/instagram/generar-y-programar", async (req, res) => {
     const scheduledAt = parseDate(req.body?.scheduled_at);
     const size = clean(req.body?.size, 40) || "1024x1280";
     const quality = clean(req.body?.quality, 20) || "medium";
+    const mode = clean(req.body?.mode, 20) || "economy";
     const title = clean(req.body?.title, 180) || "Organizá tu consultorio con Sismed";
     const subtitle = clean(req.body?.subtitle, 320) || "";
     const bullets = Array.isArray(req.body?.bullets)
@@ -1101,6 +1133,7 @@ app.post("/api/instagram/generar-y-programar", async (req, res) => {
       prompt,
       size,
       quality,
+      mode,
       title,
       subtitle,
       bullets,
@@ -1234,7 +1267,7 @@ app.post(
 init()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Sismed Action v3.3 listening on ${PORT}`);
+      console.log(`Sismed Action v3.4 listening on ${PORT}`);
     });
   })
   .catch((error) => {
