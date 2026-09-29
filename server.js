@@ -3,7 +3,9 @@ require("dotenv").config();
 const express = require("express");
 const helmet = require("helmet");
 const { Pool } = require("pg");
-const sharp = require("sharp");
+const { createHash } = require("node:crypto");
+const { applySismedOverlay, prepareLayout, validateCopy } = require("./lib/image-layout");
+const { migrate, registerRoutes } = require("./lib/publications");
 
 const app = express();
 
@@ -130,6 +132,14 @@ async function init() {
     )
   `);
 
+  await pool.query(`ALTER TABLE imagenes_marketing
+    ADD COLUMN IF NOT EXISTS background_data BYTEA,
+    ADD COLUMN IF NOT EXISTS copy_fields JSONB,
+    ADD COLUMN IF NOT EXISTS parent_image_id BIGINT REFERENCES imagenes_marketing(id)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS imagen_operaciones (
+    request_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, status TEXT NOT NULL,
+    resultado JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  await migrate(pool);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_prospectos_estado
     ON prospectos_sismed (estado)
@@ -177,7 +187,7 @@ async function igRequest(path, { method = "GET", params = {} } = {}) {
     options.body = body;
   }
 
-  const response = await fetch(url, options);
+  const response = await fetch(url, { ...options, signal: AbortSignal.timeout(25000) });
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || data.error) {
@@ -191,72 +201,6 @@ async function igRequest(path, { method = "GET", params = {} } = {}) {
 
   return data;
 }
-
-async function waitForContainer(containerId) {
-  for (let i = 0; i < 8; i++) {
-    const status = await igRequest(`/${containerId}`, {
-      params: { fields: "status_code,status" }
-    });
-
-    if (
-      status.status_code === "FINISHED" ||
-      status.status_code === "PUBLISHED"
-    ) {
-      return status;
-    }
-
-    if (
-      status.status_code === "ERROR" ||
-      status.status_code === "EXPIRED"
-    ) {
-      throw new Error(
-        `Contenedor de Instagram: ${status.status_code}` +
-        (status.status ? ` - ${status.status}` : "")
-      );
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-  }
-
-  throw new Error(
-    "Instagram todavía está procesando el contenido. Intentá nuevamente en unos segundos."
-  );
-}
-
-async function publishImage(imageUrl, caption = "") {
-  requireInstagram();
-
-  if (!/^https:\/\//i.test(imageUrl)) {
-    throw new Error("image_url debe ser una URL pública HTTPS");
-  }
-
-  const container = await igRequest(`/${IG_ACCOUNT_ID}/media`, {
-    method: "POST",
-    params: {
-      image_url: imageUrl,
-      caption: caption || ""
-    }
-  });
-
-  await waitForContainer(container.id);
-
-  const published = await igRequest(
-    `/${IG_ACCOUNT_ID}/media_publish`,
-    {
-      method: "POST",
-      params: {
-        creation_id: container.id
-      }
-    }
-  );
-
-  return {
-    container_id: container.id,
-    media_id: published.id
-  };
-}
-
-
 
 function requireCloudflareAI() {
   if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) {
@@ -279,120 +223,6 @@ function normalizeGenerationMode(mode) {
   return mode === "premium" ? "premium" : "economy";
 }
 
-function parseImageSize(size) {
-  const match = String(size || "").match(/^(\d+)x(\d+)$/);
-  if (!match) return { width: 1024, height: 1280 };
-
-  const width = Math.min(Math.max(Number(match[1]), 512), 2500);
-  const height = Math.min(Math.max(Number(match[2]), 512), 2500);
-
-  return { width, height };
-}
-
-
-function xmlEscape(value = "") {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function wrapText(text, maxChars = 34) {
-  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
-  const lines = [];
-  let line = "";
-
-  for (const word of words) {
-    const next = line ? `${line} ${word}` : word;
-    if (next.length > maxChars && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = next;
-    }
-  }
-
-  if (line) lines.push(line);
-  return lines.slice(0, 5);
-}
-
-function tspanLines(lines, x, startY, lineHeight, cls) {
-  return lines.map((line, i) =>
-    `<text x="${x}" y="${startY + i * lineHeight}" class="${cls}">${xmlEscape(line)}</text>`
-  ).join("");
-}
-
-async function applySismedOverlay(buffer, {
-  title = "Organizá tu consultorio con Sismed",
-  subtitle = "",
-  bullets = [],
-  cta = "Escribinos por privado"
-} = {}) {
-  const width = 1024;
-  const height = 1280;
-
-  const titleLines = wrapText(title, 28);
-  const subtitleLines = wrapText(subtitle, 42);
-  const safeBullets = Array.isArray(bullets)
-    ? bullets.filter(Boolean).slice(0, 4)
-    : [];
-
-  let y = 205;
-  const titleSvg = tspanLines(titleLines, 76, y, 64, "title");
-  y += titleLines.length * 64 + 28;
-
-  const subtitleSvg = subtitleLines.length
-    ? tspanLines(subtitleLines, 76, y, 36, "subtitle")
-    : "";
-  y += subtitleLines.length * 36 + (subtitleLines.length ? 34 : 0);
-
-  const bulletsSvg = safeBullets.map((item, idx) => {
-    const lines = wrapText(item, 38);
-    const blockY = y + idx * 92;
-    const lineSvg = tspanLines(lines, 116, blockY, 30, "bulletText");
-    return `
-      <circle cx="86" cy="${blockY - 9}" r="12" fill="#16a36d"/>
-      <path d="M80 ${blockY-9} l5 5 l9 -11" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-      ${lineSvg}
-    `;
-  }).join("");
-
-  const overlay = `
-  <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    <style>
-      .brand { font-family: Arial, Helvetica, sans-serif; font-size: 54px; font-weight: 800; fill: #0f5132; }
-      .title { font-family: Arial, Helvetica, sans-serif; font-size: 58px; font-weight: 800; fill: #111827; }
-      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 28px; font-weight: 500; fill: #374151; }
-      .bulletText { font-family: Arial, Helvetica, sans-serif; font-size: 27px; font-weight: 600; fill: #1f2937; }
-      .cta { font-family: Arial, Helvetica, sans-serif; font-size: 30px; font-weight: 800; fill: white; }
-    </style>
-
-    <!-- Panel para asegurar legibilidad -->
-    <rect x="38" y="36" width="620" height="1160" rx="34" fill="white" fill-opacity="1"/>
-
-    <!-- Marca simple SISMED -->
-    <rect x="76" y="78" width="58" height="22" rx="7" fill="#16a36d"/>
-    <rect x="94" y="60" width="22" height="58" rx="7" fill="#16a36d"/>
-    <text x="150" y="107" class="brand">SISMED</text>
-
-    ${titleSvg}
-    ${subtitleSvg}
-    ${bulletsSvg}
-
-    <!-- CTA -->
-    <rect x="76" y="1088" width="390" height="74" rx="28" fill="#16a36d"/>
-    <text x="271" y="1137" text-anchor="middle" class="cta">${xmlEscape(cta)}</text>
-  </svg>`;
-
-  return sharp(buffer)
-    .resize(width, height, { fit: "cover" })
-    .composite([{ input: Buffer.from(overlay) }])
-    .jpeg({ quality: 94, chromaSubsampling: "4:4:4" })
-    .toBuffer();
-}
-
 async function generateMarketingImage({
   prompt,
   size = "1024x1280",
@@ -404,6 +234,9 @@ async function generateMarketingImage({
   cta = "Escribinos por privado"
 }) {
   requireCloudflareAI();
+  if (!["economy", "premium"].includes(mode)) throw Object.assign(new Error("mode inválido"), {status:400});
+  if (size !== "1024x1280") throw Object.assign(new Error("Solo se admite 1024x1280"), {status:400});
+  await prepareLayout({ title, subtitle, bullets, cta });
 
   const allowedQualities = new Set(["low", "medium", "high", "auto"]);
   if (!allowedQualities.has(quality)) {
@@ -455,7 +288,8 @@ async function generateMarketingImage({
       "Authorization": `Bearer ${CLOUDFLARE_API_TOKEN}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(requestBody)
+    body: JSON.stringify(requestBody),
+    signal: AbortSignal.timeout(90000)
   });
 
   const data = await response.json().catch(() => ({}));
@@ -500,11 +334,11 @@ async function generateMarketingImage({
   const saved = await pool.query(
     `
     INSERT INTO imagenes_marketing
-      (prompt, model, size, quality, mime_type, image_data)
-    VALUES ($1,$2,$3,$4,'image/jpeg',$5)
+      (prompt, model, size, quality, mime_type, image_data, background_data, copy_fields)
+    VALUES ($1,$2,$3,$4,'image/jpeg',$5,$6,$7)
     RETURNING id, prompt, model, size, quality, mime_type, created_at
     `,
-    [prompt, selectedModel, "1024x1280", quality, finalBuffer]
+    [prompt, selectedModel, "1024x1280", quality, finalBuffer, rawBuffer, JSON.stringify({title,subtitle,bullets,cta})]
   );
 
   const image = saved.rows[0];
@@ -558,7 +392,7 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "3.4.0"
+    version: "3.5.0"
   });
 });
 
@@ -569,7 +403,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "3.4.0"
+      version: "3.5.0"
     });
   } catch (error) {
     console.error(error);
@@ -804,47 +638,59 @@ app.patch("/api/prospectos/:id", async (req, res) => {
 
 /* ---------- IMÁGENES DE MARKETING ---------- */
 
-app.post("/api/imagenes/generar", async (req, res) => {
-  try {
-    const prompt = clean(req.body?.prompt, 2048);
-    const size = clean(req.body?.size, 40) || "1024x1280";
-    const quality = clean(req.body?.quality, 20) || "medium";
-    const mode = clean(req.body?.mode, 20) || "economy";
-    const title = clean(req.body?.title, 180) || "Organizá tu consultorio con Sismed";
-    const subtitle = clean(req.body?.subtitle, 320) || "";
-    const bullets = Array.isArray(req.body?.bullets)
-      ? req.body.bullets.map(x => clean(x, 140)).filter(Boolean).slice(0,4)
-      : [];
-    const cta = clean(req.body?.cta, 80) || "Escribinos por privado";
-
-    if (!prompt) {
-      return res.status(400).json({
-        error: "prompt es obligatorio"
-      });
-    }
-
-    const image = await generateMarketingImage({
-      prompt,
-      size,
-      quality,
-      mode,
-      title,
-      subtitle,
-      bullets,
-      cta
-    });
-
-    res.status(201).json({
-      ok: true,
-      imagen: image
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(error.status || 502).json({
-      error: error.message,
-      detalle: error.meta || null
-    });
+// Persist one generation attempt per request_id. An uncertain retry cannot consume twice.
+async function imageOperation(req, res, operation, payload, execute) {
+  const requestId = req.body?.request_id;
+  if (typeof requestId !== "string" || !/^[a-zA-Z0-9_-]{16,100}$/.test(requestId)) {
+    return res.status(400).json({error:"request_id obligatorio: 16 a 100 letras, números o guiones"});
   }
+  const hash = createHash("sha256").update(JSON.stringify([operation,payload])).digest("hex");
+  const claim = await pool.query(`INSERT INTO imagen_operaciones(request_id,request_hash,status)
+    VALUES ($1,$2,'procesando') ON CONFLICT DO NOTHING RETURNING request_id`,[requestId,hash]);
+  if (!claim.rows.length) {
+    const item = (await pool.query("SELECT * FROM imagen_operaciones WHERE request_id=$1",[requestId])).rows[0];
+    if (item.request_hash !== hash) return res.status(409).json({error:"request_id ya usado con otros datos"});
+    if (item.status === 'lista') return res.json({ok:true,imagen:item.resultado,reutilizada:true});
+    return res.status(409).json({error:"Intento previo pendiente o fallido: revisar imágenes antes de generar otra vez",status:item.status});
+  }
+  try {
+    const image = await execute();
+    await pool.query("UPDATE imagen_operaciones SET status='lista',resultado=$2 WHERE request_id=$1",[requestId,JSON.stringify(image)]);
+    res.status(201).json({ok:true,imagen:image});
+  } catch(error) {
+    await pool.query("UPDATE imagen_operaciones SET status='revision' WHERE request_id=$1",[requestId]);
+    res.status(error.status >= 400 && error.status < 500 ? error.status : 502).json({error: error.status === 422 || error.status === 400 ? error.message : "No se completó la imagen. Revisar cuota, configuración y registros antes de reintentar."});
+  }
+}
+app.post("/api/imagenes/generar", async (req,res) => {
+  try {
+    const copy = validateCopy(req.body || {});
+    const {prompt,mode='economy',quality='medium',size='1024x1280'} = req.body;
+    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 2048) return res.status(400).json({error:'prompt inválido'});
+    if (!['economy','premium'].includes(mode) || !['low','medium','high','auto'].includes(quality) || size!=='1024x1280') return res.status(400).json({error:'Modo, calidad o tamaño inválido'});
+    const payload={prompt,mode,quality,size,...copy};
+    await imageOperation(req,res,'generar',payload,()=>generateMarketingImage(payload));
+  } catch(error) {res.status(error.status || 500).json({error:error.status?error.message:'Error interno'});}
+});
+app.post("/api/imagenes/:id/textos", async (req,res) => {
+  try {
+    const id=Number(req.params.id);
+    if (!Number.isSafeInteger(id)||id<1) return res.status(400).json({error:'id inválido'});
+    const copy=validateCopy(req.body||{});
+    const existing=(await pool.query('SELECT * FROM imagenes_marketing WHERE id=$1',[id])).rows[0];
+    if (!existing) return res.status(404).json({error:'Imagen no encontrada'});
+    if (!existing.background_data) return res.status(409).json({error:'Esta imagen antigua no conserva el fondo. Solo las nuevas permiten editar textos.'});
+    await imageOperation(req,res,'textos',{id,...copy},async()=>{
+      const finalBuffer=await applySismedOverlay(existing.background_data,copy);
+      const saved=await pool.query(`INSERT INTO imagenes_marketing
+        (prompt,model,size,quality,mime_type,image_data,background_data,copy_fields,parent_image_id)
+        VALUES ($1,$2,'1024x1280',$3,'image/jpeg',$4,$5,$6,$7)
+        RETURNING id,prompt,model,size,quality,mime_type,created_at`,
+        [existing.prompt,existing.model,existing.quality,finalBuffer,existing.background_data,JSON.stringify(copy),id]);
+      const item=saved.rows[0];
+      return {...item,url:`${PUBLIC_BASE_URL}/media/generated/${item.id}.jpg`};
+    });
+  } catch(error) {res.status(error.status||500).json({error:error.status?error.message:'Error interno'});}
 });
 
 app.get("/api/imagenes", async (req, res) => {
@@ -905,372 +751,17 @@ app.get("/api/instagram/status", async (_req, res) => {
   }
 });
 
-app.post("/api/instagram/publicar-imagen", async (req, res) => {
-  try {
-    const imageUrl = clean(req.body?.image_url, 2000);
-    const caption = clean(req.body?.caption, 2200) || "";
+registerRoutes(app, { pool, igRequest, accountId: IG_ACCOUNT_ID, publicBaseUrl: PUBLIC_BASE_URL });
 
-    if (!imageUrl) {
-      return res.status(400).json({
-        error: "image_url es obligatorio"
-      });
-    }
-
-    const pub = await publishImage(imageUrl, caption);
-
-    const result = await pool.query(
-      `
-      INSERT INTO publicaciones_instagram
-      (
-        image_url,
-        caption,
-        scheduled_at,
-        status,
-        instagram_media_id,
-        published_at
-      )
-      VALUES ($1,$2,NOW(),'publicada',$3,NOW())
-      RETURNING *
-      `,
-      [imageUrl, caption, pub.media_id]
-    );
-
-    res.status(201).json({
-      ok: true,
-      instagram: pub,
-      registro: result.rows[0]
-    });
-  } catch (error) {
-    console.error(error);
-
-    res.status(502).json({
-      error: error.message,
-      detalle: error.meta || null
-    });
-  }
-});
-
-app.post("/api/instagram/programaciones", async (req, res) => {
-  try {
-    const imageUrl = clean(req.body?.image_url, 2000);
-    const caption = clean(req.body?.caption, 2200) || "";
-    const scheduledAt = parseDate(req.body?.scheduled_at);
-
-    if (!imageUrl) {
-      return res.status(400).json({
-        error: "image_url es obligatorio"
-      });
-    }
-
-    if (!/^https:\/\//i.test(imageUrl)) {
-      return res.status(400).json({
-        error: "image_url debe ser HTTPS público"
-      });
-    }
-
-    if (!scheduledAt) {
-      return res.status(400).json({
-        error: "scheduled_at es obligatorio y debe ser una fecha válida"
-      });
-    }
-
-    const result = await pool.query(
-      `
-      INSERT INTO publicaciones_instagram
-      (
-        image_url,
-        caption,
-        scheduled_at,
-        status
-      )
-      VALUES ($1,$2,$3,'programada')
-      RETURNING *
-      `,
-      [imageUrl, caption, scheduledAt]
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Error interno" });
-  }
-});
-
-app.get("/api/instagram/programaciones", async (req, res) => {
-  try {
-    const status = clean(req.query.status, 30);
-
-    const limite = Math.min(
-      Math.max(Number(req.query.limite || 25), 1),
-      100
-    );
-
-    const params = [];
-    let sql = "SELECT * FROM publicaciones_instagram";
-
-    if (status) {
-      params.push(status);
-      sql += " WHERE status = $1";
-    }
-
-    params.push(limite);
-
-    sql += `
-      ORDER BY scheduled_at ASC
-      LIMIT $${params.length}
-    `;
-
-    const result = await pool.query(sql, params);
-
-    res.json({
-      total: result.rows.length,
-      publicaciones: result.rows
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Error interno" });
-  }
-});
-
-app.post(
-  "/api/instagram/programaciones/:id/publicar",
-  async (req, res) => {
-    try {
-      const id = Number(req.params.id);
-
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ error: "id inválido" });
-      }
-
-      const query = await pool.query(
-        `
-        SELECT *
-        FROM publicaciones_instagram
-        WHERE id = $1
-        `,
-        [id]
-      );
-
-      if (!query.rows.length) {
-        return res.status(404).json({
-          error: "Publicación no encontrada"
-        });
-      }
-
-      const item = query.rows[0];
-
-      if (item.status === "publicada") {
-        return res.json({
-          ok: true,
-          ya_publicada: true,
-          publicacion: item
-        });
-      }
-
-      const pub = await publishImage(
-        item.image_url,
-        item.caption
-      );
-
-      const result = await pool.query(
-        `
-        UPDATE publicaciones_instagram
-        SET
-          status='publicada',
-          instagram_media_id=$2,
-          published_at=NOW(),
-          error=NULL,
-          updated_at=NOW()
-        WHERE id=$1
-        RETURNING *
-        `,
-        [id, pub.media_id]
-      );
-
-      res.json({
-        ok: true,
-        instagram: pub,
-        publicacion: result.rows[0]
-      });
-    } catch (error) {
-      console.error(error);
-
-      res.status(502).json({
-        error: error.message,
-        detalle: error.meta || null
-      });
-    }
-  }
-);
-
-
-app.post("/api/instagram/generar-y-programar", async (req, res) => {
-  try {
-    const prompt = clean(req.body?.prompt, 2048);
-    const caption = clean(req.body?.caption, 2200) || "";
-    const scheduledAt = parseDate(req.body?.scheduled_at);
-    const size = clean(req.body?.size, 40) || "1024x1280";
-    const quality = clean(req.body?.quality, 20) || "medium";
-    const mode = clean(req.body?.mode, 20) || "economy";
-    const title = clean(req.body?.title, 180) || "Organizá tu consultorio con Sismed";
-    const subtitle = clean(req.body?.subtitle, 320) || "";
-    const bullets = Array.isArray(req.body?.bullets)
-      ? req.body.bullets.map(x => clean(x, 140)).filter(Boolean).slice(0,4)
-      : [];
-    const cta = clean(req.body?.cta, 80) || "Escribinos por privado";
-
-    if (!prompt) {
-      return res.status(400).json({ error: "prompt es obligatorio" });
-    }
-
-    if (!scheduledAt) {
-      return res.status(400).json({
-        error: "scheduled_at es obligatorio y debe ser una fecha válida"
-      });
-    }
-
-    const image = await generateMarketingImage({
-      prompt,
-      size,
-      quality,
-      mode,
-      title,
-      subtitle,
-      bullets,
-      cta
-    });
-
-    const result = await pool.query(
-      `
-      INSERT INTO publicaciones_instagram
-        (image_url, caption, scheduled_at, status)
-      VALUES ($1,$2,$3,'programada')
-      RETURNING *
-      `,
-      [image.url, caption, scheduledAt]
-    );
-
-    res.status(201).json({
-      ok: true,
-      imagen: image,
-      programacion: result.rows[0]
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(error.status || 502).json({
-      error: error.message,
-      detalle: error.meta || null
-    });
-  }
-});
-
-app.post(
-  "/api/instagram/procesar-programadas",
-  async (_req, res) => {
-    const resultados = [];
-
-    try {
-      const due = await pool.query(`
-        SELECT id
-        FROM publicaciones_instagram
-        WHERE
-          status='programada'
-          AND scheduled_at <= NOW()
-        ORDER BY scheduled_at ASC
-        LIMIT 10
-      `);
-
-      for (const row of due.rows) {
-        const id = row.id;
-
-        const claim = await pool.query(
-          `
-          UPDATE publicaciones_instagram
-          SET
-            status='procesando',
-            updated_at=NOW()
-          WHERE
-            id=$1
-            AND status='programada'
-          RETURNING *
-          `,
-          [id]
-        );
-
-        if (!claim.rows.length) continue;
-
-        const item = claim.rows[0];
-
-        try {
-          const pub = await publishImage(
-            item.image_url,
-            item.caption
-          );
-
-          const saved = await pool.query(
-            `
-            UPDATE publicaciones_instagram
-            SET
-              status='publicada',
-              instagram_media_id=$2,
-              published_at=NOW(),
-              error=NULL,
-              updated_at=NOW()
-            WHERE id=$1
-            RETURNING *
-            `,
-            [id, pub.media_id]
-          );
-
-          resultados.push({
-            id,
-            ok: true,
-            media_id: pub.media_id,
-            registro: saved.rows[0]
-          });
-        } catch (error) {
-          await pool.query(
-            `
-            UPDATE publicaciones_instagram
-            SET
-              status='error',
-              error=$2,
-              updated_at=NOW()
-            WHERE id=$1
-            `,
-            [id, String(error.message).slice(0, 4000)]
-          );
-
-          resultados.push({
-            id,
-            ok: false,
-            error: error.message
-          });
-        }
-      }
-
-      res.json({
-        ok: true,
-        procesadas: resultados.length,
-        resultados
-      });
-    } catch (error) {
-      console.error(error);
-
-      res.status(500).json({
-        error: "Error procesando programaciones"
-      });
-    }
-  }
-);
-
-init()
+if (require.main === module) init()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Sismed Action v3.4 listening on ${PORT}`);
+      console.log(`Sismed Action v3.5 listening on ${PORT}`);
     });
   })
   .catch((error) => {
     console.error(error);
     process.exit(1);
   });
+
+module.exports = { app, init, pool };

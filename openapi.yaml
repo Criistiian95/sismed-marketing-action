@@ -1,65 +1,81 @@
 openapi: 3.1.0
 info:
   title: Sismed Marketing API
-  version: 3.4.0
-  description: >
-    API para prospectos, imágenes de marketing y publicaciones de Instagram de Sismed.
-    Nunca debe almacenar datos clínicos ni datos de pacientes.
+  version: 3.5.0
+  description: 'API para prospectos, imágenes de marketing y publicaciones de Instagram
+    de Sismed. Nunca debe almacenar datos clínicos ni datos de pacientes.
+
+    '
 servers:
-  - url: https://sismed-marketing-action.onrender.com
+- url: https://sismed-marketing-action.onrender.com
 paths:
   /api/prospectos:
     post:
       operationId: crearProspecto
       summary: Registrar un nuevo consultorio potencial
-      security: [{ bearerAuth: [] }]
+      security:
+      - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/NuevoProspecto' }
+            schema:
+              $ref: '#/components/schemas/NuevoProspecto'
       responses:
-        '201': { description: Prospecto creado }
+        '201':
+          description: Prospecto creado
     get:
       operationId: listarProspectos
       summary: Listar prospectos comerciales
-      security: [{ bearerAuth: [] }]
+      security:
+      - bearerAuth: []
       parameters:
-        - name: estado
-          in: query
-          schema: { $ref: '#/components/schemas/Estado' }
-        - name: limite
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      - name: estado
+        in: query
+        schema:
+          $ref: '#/components/schemas/Estado'
+      - name: limite
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 25
       responses:
-        '200': { description: Lista de prospectos }
-
+        '200':
+          description: Lista de prospectos
   /api/prospectos/{id}:
     patch:
       operationId: actualizarProspecto
       summary: Actualizar un prospecto
-      security: [{ bearerAuth: [] }]
+      security:
+      - bearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer, minimum: 1 }
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ActualizacionProspecto' }
+            schema:
+              $ref: '#/components/schemas/ActualizacionProspecto'
       responses:
-        '200': { description: Prospecto actualizado }
-
+        '200':
+          description: Prospecto actualizado
   /api/imagenes/generar:
     post:
       operationId: generarImagenMarketing
       summary: Generar publicidad de Sismed con modo económico o premium y texto exacto
-      description: >
-        Genera el fondo visual con IA y agrega titular, subtítulo, beneficios y CTA
-        de forma determinística. Devuelve una URL pública lista para Instagram.
-      security: [{ bearerAuth: [] }]
+      description: 'Genera el fondo visual con IA y agrega titular, subtítulo, beneficios
+        y CTA de forma determinística. Devuelve una URL pública lista para Instagram.
+
+        '
+      security:
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -67,12 +83,16 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [prompt, title]
+              required:
+              - request_id
+              - prompt
+              - title
               properties:
                 prompt:
                   type: string
                   maxLength: 2048
-                  description: Descripción visual del fondo. No pedir texto dentro de la imagen.
+                  description: Descripción visual del fondo. No pedir texto dentro
+                    de la imagen.
                 title:
                   type: string
                   maxLength: 180
@@ -88,49 +108,136 @@ paths:
                 cta:
                   type: string
                   maxLength: 80
-                  default: Escribinos por privado
+                  default: Pedí información
                 size:
                   type: string
                   default: 1024x1280
                   description: Formato 4:5 para Instagram.
+                  enum:
+                  - 1024x1280
                 quality:
                   type: string
-                  enum: [low, medium, high, auto]
-                  default: high
+                  enum:
+                  - low
+                  - medium
+                  - high
+                  - auto
+                  default: medium
                 mode:
                   type: string
-                  enum: [economy, premium]
+                  enum:
+                  - economy
+                  - premium
                   default: economy
                   description: economy usa FLUX.1 Schnell; premium usa Lucid Origin.
+                request_id:
+                  type: string
+                  minLength: 16
+                  maxLength: 100
+                  pattern: ^[a-zA-Z0-9_-]+$
+                  description: Clave única por pedido. Reutilizar clave y datos ante
+                    reintentos; no crear otra ante timeout.
       responses:
-        '201': { description: Imagen generada y alojada }
-
+        '200':
+          description: Imagen y URL pública
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  imagen:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      url:
+                        type: string
+                        format: uri
+                      size:
+                        type: string
+                      model:
+                        type: string
+                      quality:
+                        type: string
+        '201':
+          description: Imagen y URL pública
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  imagen:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      url:
+                        type: string
+                        format: uri
+                      size:
+                        type: string
+                      model:
+                        type: string
+                      quality:
+                        type: string
+        '409':
+          description: Intento pendiente/fallido o imagen antigua sin fondo
+        '422':
+          description: Texto demasiado largo para composición legible
+        '502':
+          description: Generación no confirmada; revisar antes de repetir
   /api/imagenes:
     get:
       operationId: listarImagenesMarketing
       summary: Listar imágenes de marketing generadas
-      security: [{ bearerAuth: [] }]
+      security:
+      - bearerAuth: []
       parameters:
-        - name: limite
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      - name: limite
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
       responses:
-        '200': { description: Lista de imágenes }
-
+        '200':
+          description: Lista de imágenes
   /api/instagram/status:
     get:
       operationId: verificarInstagram
       summary: Verificar conexión con Instagram
-      security: [{ bearerAuth: [] }]
+      security:
+      - bearerAuth: []
       responses:
-        '200': { description: Estado de conexión }
-
+        '200':
+          description: Estado de conexión
   /api/instagram/publicar-imagen:
     post:
       operationId: publicarImagenInstagram
-      summary: Publicar inmediatamente una imagen aprobada
-      description: Usar solo si el usuario pidió explícitamente publicar ahora.
-      security: [{ bearerAuth: [] }]
+      summary: Publicar ahora una pieza aprobada
+      description: Ante timeout consultar el mismo id; nunca crear otra pieza para
+        reintentar.
+      x-openai-isConsequential: true
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Estado real de la operación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Publicacion'
+        '400':
+          description: Datos inválidos
+        '409':
+          description: Versión desactualizada, sin aprobación u operación ocupada
+        '502':
+          description: Resultado incierto; consultar antes de repetir
       requestBody:
         required: true
         content:
@@ -138,18 +245,37 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [image_url]
+              required:
+              - publication_id
+              - revision
               properties:
-                image_url: { type: string, format: uri }
-                caption: { type: string, maxLength: 2200 }
-      responses:
-        '201': { description: Imagen publicada }
-
+                publication_id:
+                  type: integer
+                  minimum: 1
+                revision:
+                  type: integer
+                  minimum: 1
   /api/instagram/programaciones:
     post:
       operationId: programarPublicacionInstagram
-      summary: Programar una imagen pública existente
-      security: [{ bearerAuth: [] }]
+      summary: Programar o reprogramar una pieza aprobada
+      description: Fecha futura con zona horaria. Usar el id aprobado; no regenerar.
+      x-openai-isConsequential: true
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Estado real de la operación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Publicacion'
+        '400':
+          description: Datos inválidos
+        '409':
+          description: Versión desactualizada, sin aprobación u operación ocupada
+        '502':
+          description: Resultado incierto; consultar antes de repetir
       requestBody:
         required: true
         content:
@@ -157,39 +283,96 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [image_url, scheduled_at]
+              required:
+              - publication_id
+              - revision
+              - scheduled_at
               properties:
-                image_url: { type: string, format: uri }
-                caption: { type: string, maxLength: 2200 }
+                publication_id:
+                  type: integer
+                  minimum: 1
+                revision:
+                  type: integer
+                  minimum: 1
                 scheduled_at:
                   type: string
                   format: date-time
-      responses:
-        '201': { description: Publicación programada }
     get:
       operationId: listarPublicacionesInstagram
       summary: Listar publicaciones de Instagram
-      security: [{ bearerAuth: [] }]
+      security:
+      - bearerAuth: []
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [programada, procesando, publicada, error]
-        - name: limite
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - borrador
+          - aprobada
+          - programada
+          - procesando
+          - publicando
+          - publicada
+          - revision
+          - error
+          - cancelada
+      - name: limite
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 25
+      - name: before_id
+        in: query
+        schema:
+          type: integer
+          minimum: 1
       responses:
-        '200': { description: Lista de publicaciones }
-
-  /api/instagram/generar-y-programar:
+        '200':
+          description: Más recientes primero; continuar con next_before_id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publicaciones:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Publicacion'
+                  next_before_id:
+                    type:
+                    - string
+                    - 'null'
+  /api/instagram/programaciones/{id}/publicar:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
     post:
-      operationId: generarYProgramarInstagram
-      summary: Generar publicidad económica o premium con texto exacto y programarla en Instagram
-      description: >
-        Genera el fondo visual, agrega texto exacto en español, aloja la imagen
-        públicamente y crea la programación de Instagram.
-      security: [{ bearerAuth: [] }]
+      operationId: publicarProgramacionInstagram
+      summary: Publicar una programación aprobada
+      description: Comparte reserva con el cron.
+      x-openai-isConsequential: true
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Estado real de la operación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Publicacion'
+        '400':
+          description: Datos inválidos
+        '409':
+          description: Versión desactualizada, sin aprobación u operación ocupada
+        '502':
+          description: Resultado incierto; consultar antes de repetir
       requestBody:
         required: true
         content:
@@ -197,12 +380,342 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [prompt, title, scheduled_at]
+              required:
+              - revision
               properties:
-                prompt:
+                revision:
+                  type: integer
+                  minimum: 1
+  /api/instagram/borradores:
+    post:
+      operationId: crearBorradorInstagram
+      summary: Guardar una pieza para revisión
+      description: No publica. Mostrar imagen y copy con id y revision antes de aprobar.
+      x-openai-isConsequential: false
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Estado real de la operación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Publicacion'
+        '400':
+          description: Datos inválidos
+        '409':
+          description: Versión desactualizada, sin aprobación u operación ocupada
+        '502':
+          description: Resultado incierto; consultar antes de repetir
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - request_id
+              - image_id
+              - caption
+              properties:
+                request_id:
                   type: string
-                  maxLength: 2048
-                  description: Descripción visual del fondo. No pedir texto dentro de la imagen.
+                  minLength: 16
+                  maxLength: 100
+                  pattern: ^[a-zA-Z0-9_-]+$
+                  description: Clave única por pedido. Reutilizar clave y datos ante
+                    reintentos; no crear otra ante timeout.
+                image_id:
+                  type: integer
+                  minimum: 1
+                caption:
+                  type: string
+                  maxLength: 2200
+  /api/instagram/programaciones/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    get:
+      operationId: consultarPublicacionInstagram
+      summary: Consultar una pieza y su estado exacto
+      description: Preferir consulta por id ante timeout.
+      x-openai-isConsequential: false
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Estado real de la operación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Publicacion'
+        '400':
+          description: Datos inválidos
+        '409':
+          description: Versión desactualizada, sin aprobación u operación ocupada
+        '502':
+          description: Resultado incierto; consultar antes de repetir
+    patch:
+      operationId: editarBorradorInstagram
+      summary: Editar pieza e invalidar aprobación
+      description: Retira programación y aumenta revision. Mostrar nuevamente para
+        aprobar.
+      x-openai-isConsequential: true
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Estado real de la operación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Publicacion'
+        '400':
+          description: Datos inválidos
+        '409':
+          description: Versión desactualizada, sin aprobación u operación ocupada
+        '502':
+          description: Resultado incierto; consultar antes de repetir
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - revision
+              - image_id
+              - caption
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+                image_id:
+                  type: integer
+                  minimum: 1
+                caption:
+                  type: string
+                  maxLength: 2200
+  /api/instagram/programaciones/{id}/aprobar:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    post:
+      operationId: aprobarPublicacionInstagram
+      summary: Registrar aprobación explícita de una versión
+      description: Solo después de mostrar imagen y copy exactos y recibir aprobación
+        del usuario. Un pedido inicial de creación no es aprobación.
+      x-openai-isConsequential: true
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Estado real de la operación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Publicacion'
+        '400':
+          description: Datos inválidos
+        '409':
+          description: Versión desactualizada, sin aprobación u operación ocupada
+        '502':
+          description: Resultado incierto; consultar antes de repetir
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - revision
+              - confirmacion
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+                confirmacion:
+                  type: boolean
+                  enum:
+                  - true
+  /api/instagram/programaciones/{id}/cancelar:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    post:
+      operationId: cancelarPublicacionInstagram
+      summary: Cancelar antes de iniciar publicación
+      description: No permite cancelar operaciones en curso.
+      x-openai-isConsequential: true
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Estado real de la operación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Publicacion'
+        '400':
+          description: Datos inválidos
+        '409':
+          description: Versión desactualizada, sin aprobación u operación ocupada
+        '502':
+          description: Resultado incierto; consultar antes de repetir
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - revision
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+  /api/instagram/programaciones/{id}/verificar:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    post:
+      operationId: verificarResultadoInstagram
+      summary: Consultar un resultado incierto en Instagram
+      description: No reenvía. Marca publicada solo si el contenedor devuelve PUBLISHED.
+      x-openai-isConsequential: false
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Estado real de la operación
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publicacion:
+                    $ref: '#/components/schemas/Publicacion'
+                  container_status:
+                    type: string
+                  requiere_revision:
+                    type: boolean
+                  verificado_en_instagram:
+                    type: boolean
+                  status:
+                    type: string
+        '400':
+          description: Datos inválidos
+        '409':
+          description: Versión desactualizada, sin aprobación u operación ocupada
+        '502':
+          description: Resultado incierto; consultar antes de repetir
+  /api/imagenes/{id}/textos:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    post:
+      operationId: editarTextosImagenMarketing
+      summary: Crear otra versión usando el mismo fondo
+      description: No consume Cloudflare. Solo imágenes nuevas que conservan fondo.
+        Devuelve otra URL y requiere nueva aprobación.
+      x-openai-isConsequential: false
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Imagen y URL pública
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  imagen:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      url:
+                        type: string
+                        format: uri
+                      size:
+                        type: string
+                      model:
+                        type: string
+                      quality:
+                        type: string
+        '201':
+          description: Imagen y URL pública
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  imagen:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      url:
+                        type: string
+                        format: uri
+                      size:
+                        type: string
+                      model:
+                        type: string
+                      quality:
+                        type: string
+        '409':
+          description: Intento pendiente/fallido o imagen antigua sin fondo
+        '422':
+          description: Texto demasiado largo para composición legible
+        '502':
+          description: Generación no confirmada; revisar antes de repetir
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - request_id
+              - title
+              properties:
+                request_id:
+                  type: string
+                  minLength: 16
+                  maxLength: 100
+                  pattern: ^[a-zA-Z0-9_-]+$
+                  description: Clave única por pedido. Reutilizar clave y datos ante
+                    reintentos; no crear otra ante timeout.
                 title:
                   type: string
                   maxLength: 180
@@ -218,82 +731,139 @@ paths:
                 cta:
                   type: string
                   maxLength: 80
-                  default: Escribinos por privado
-                caption:
-                  type: string
-                  maxLength: 2200
-                scheduled_at:
-                  type: string
-                  format: date-time
-                size:
-                  type: string
-                  default: 1024x1280
-                quality:
-                  type: string
-                  enum: [low, medium, high, auto]
-                  default: high
-                mode:
-                  type: string
-                  enum: [economy, premium]
-                  default: economy
-                  description: economy usa FLUX.1 Schnell; premium usa Lucid Origin.
-      responses:
-        '201': { description: Imagen generada y publicación programada }
-
-  /api/instagram/programaciones/{id}/publicar:
-    post:
-      operationId: publicarProgramacionInstagram
-      summary: Publicar manualmente una programación
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer, minimum: 1 }
-      responses:
-        '200': { description: Publicación realizada }
-
+                  default: Pedí información
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-
   schemas:
     Estado:
       type: string
-      enum: [nuevo, contactado, respondio, interesado, piloto, descartado]
-
+      enum:
+      - nuevo
+      - contactado
+      - respondio
+      - interesado
+      - piloto
+      - descartado
     Canal:
       type: string
-      enum: [instagram, facebook, whatsapp, email, telefono, linkedin, web, visita, otro]
-
+      enum:
+      - instagram
+      - facebook
+      - whatsapp
+      - email
+      - telefono
+      - linkedin
+      - web
+      - visita
+      - otro
     NuevoProspecto:
       type: object
       additionalProperties: false
-      required: [nombre_consultorio]
+      required:
+      - nombre_consultorio
       properties:
-        nombre_consultorio: { type: string, maxLength: 200 }
-        ciudad: { type: string, maxLength: 120 }
-        contacto_nombre: { type: string, maxLength: 160 }
-        canal: { $ref: '#/components/schemas/Canal' }
-        contacto: { type: string, maxLength: 255 }
-        fuente: { type: string, maxLength: 255 }
-        estado: { $ref: '#/components/schemas/Estado' }
-        notas: { type: string, maxLength: 4000 }
-        proxima_accion: { type: string, maxLength: 255 }
-        fecha_proxima_accion: { type: string, format: date-time }
-
+        nombre_consultorio:
+          type: string
+          maxLength: 200
+        ciudad:
+          type: string
+          maxLength: 120
+        contacto_nombre:
+          type: string
+          maxLength: 160
+        canal:
+          $ref: '#/components/schemas/Canal'
+        contacto:
+          type: string
+          maxLength: 255
+        fuente:
+          type: string
+          maxLength: 255
+        estado:
+          $ref: '#/components/schemas/Estado'
+        notas:
+          type: string
+          maxLength: 4000
+        proxima_accion:
+          type: string
+          maxLength: 255
+        fecha_proxima_accion:
+          type: string
+          format: date-time
     ActualizacionProspecto:
       type: object
       additionalProperties: false
       properties:
-        ciudad: { type: string, maxLength: 120 }
-        contacto_nombre: { type: string, maxLength: 160 }
-        canal: { $ref: '#/components/schemas/Canal' }
-        contacto: { type: string, maxLength: 255 }
-        fuente: { type: string, maxLength: 255 }
-        estado: { $ref: '#/components/schemas/Estado' }
-        notas: { type: string, maxLength: 4000 }
-        proxima_accion: { type: string, maxLength: 255 }
-        fecha_proxima_accion: { type: string, format: date-time }
+        ciudad:
+          type: string
+          maxLength: 120
+        contacto_nombre:
+          type: string
+          maxLength: 160
+        canal:
+          $ref: '#/components/schemas/Canal'
+        contacto:
+          type: string
+          maxLength: 255
+        fuente:
+          type: string
+          maxLength: 255
+        estado:
+          $ref: '#/components/schemas/Estado'
+        notas:
+          type: string
+          maxLength: 4000
+        proxima_accion:
+          type: string
+          maxLength: 255
+        fecha_proxima_accion:
+          type: string
+          format: date-time
+    Publicacion:
+      type: object
+      properties:
+        id:
+          type: string
+        image_url:
+          type: string
+        caption:
+          type: string
+        revision:
+          type: integer
+          minimum: 1
+        approved_revision:
+          type:
+          - integer
+          - 'null'
+        status:
+          type: string
+          enum:
+          - borrador
+          - aprobada
+          - programada
+          - procesando
+          - publicando
+          - publicada
+          - revision
+          - error
+          - cancelada
+        scheduled_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        target_account_id:
+          type:
+          - string
+          - 'null'
+        instagram_media_id:
+          type:
+          - string
+          - 'null'
+        error:
+          type:
+          - string
+          - 'null'
