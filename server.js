@@ -9,6 +9,7 @@ const { migrate, registerRoutes } = require("./lib/publications");
 
 const {migrateMedia,createReels}=require('./lib/reels');
 const {cleanup}=require('./lib/retention');
+const {migrateDeletion,registerDeletion}=require('./lib/media-deletion');
 const app = express();
 
 app.use(helmet({
@@ -143,6 +144,7 @@ async function init() {
     resultado JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   await migrate(pool);
   await migrateMedia(pool);
+  await migrateDeletion(pool);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_prospectos_estado
     ON prospectos_sismed (estado)
@@ -396,7 +398,7 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "3.6.0"
+    version: "3.7.0"
   });
 });
 
@@ -407,7 +409,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "3.6.0"
+      version: "3.7.0"
     });
   } catch (error) {
     console.error(error);
@@ -755,6 +757,7 @@ app.get("/api/instagram/status", async (_req, res) => {
   }
 });
 
+registerDeletion(app,{pool,publicBaseUrl:PUBLIC_BASE_URL});
 const reels=createReels({pool,publicBaseUrl:PUBLIC_BASE_URL});
 const reelRoute=fn=>async(req,res)=>{try{res.json(await fn(req));}catch(e){res.status(e.status||500).json({error:e.status?e.message:'Error interno'});}};
 app.post('/api/reels',reelRoute(req=>reels.create(req.body||{})));
@@ -780,7 +783,7 @@ if (require.main === module) init()
     setInterval(()=>reels.process().catch(()=>console.error('Fallo procesando reel')),15000).unref();
     setInterval(()=>cleanup(pool).catch(()=>console.error('Fallo de limpieza de medios')),3600000).unref();
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Sismed Action v3.6 listening on ${PORT}`);
+      console.log(`Sismed Action v3.7 listening on ${PORT}`);
     });
   })
   .catch((error) => {

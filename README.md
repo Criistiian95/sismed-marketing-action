@@ -78,3 +78,11 @@ Las pruebas locales no sustituyen la validación contra Meta y Cloudflare despu�
 - PostgreSQL reutiliza el espacio liberado mediante su mantenimiento normal; no se promete reducción inmediata del tamaño físico ni de la factura. Los respaldos pueden conservar versiones anteriores.
 - Actualizar en el GPT **openapi-gpt.json** e **GPT_INSTRUCTIONS.md** (menos de 8.000 caracteres). No hay nuevas credenciales. FFmpeg se instala con npm (`ffmpeg-static`); opcional `FFMPEG_PATH` para un binario propio.
 - Pruebas incluyen montaje MP4 real, publicación de reel simulada, aprobación y limpieza de medios compartidos. La publicación real en Instagram debe probarse con una pieza expresamente aprobada por Cristian.
+
+## v3.7: eliminación manual autorizada
+
+Dos nuevas Actions: `consultarEliminacionMedio` (GET `/api/medios/{tipo}/{id}/eliminacion`) y `eliminarMedioMarketing` (DELETE `/api/medios/{tipo}/{id}`). Tipo `imagen` o `reel`. La consulta devuelve tamaño total, enlaces, referencias, bloqueos y `revision_borrado`. La eliminación exige `confirmacion: true` y esa huella vigente. La Action se marca consequential para la confirmación de ChatGPT; el servidor registra la declaración autenticada, no una prueba independiente de identidad humana.
+
+Elimina los bytes de imagen/fondo/video, no filas de historial ni publicaciones de Instagram. Mantiene IDs, marcas de eliminación y auditoría mínima; URLs del archivo responden 410. Repetir es idempotente. No afecta otros medios ni cancela borradores. Bloquea cualquier publicación distinta de cancelada/publicada, montajes pendientes/procesando e imágenes utilizadas por reels no archivados. Comparte el orden de locks con la retención automática y revalida la huella dentro de la transacción para evitar borrar referencias nuevas. Los respaldos/cachés previos pueden conservar copias, y el espacio físico se reutiliza según el mantenimiento PostgreSQL.
+
+Para descartar el Reel 1: consultar tipo reel/id 1, confirmar autorización existente, eliminar y volver a consultar; verificar que Reel 2/borrador 8 permanecen intactos. Las Actions se incorporan reemplazando openapi-gpt.json e instrucciones. Esta actualización no elimina ningún archivo por sí sola.

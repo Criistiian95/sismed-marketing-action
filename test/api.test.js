@@ -25,8 +25,10 @@ before(async()=>{
 after(async()=>db.close());
 const auth=req=>req.set('Authorization','Bearer local-test-key');
 test('health comprueba base y API rechaza peticiones sin autenticación',async()=>{
-  const r=await request(app).get('/health').expect(200);assert.equal(r.body.version,'3.6.0');
+  const r=await request(app).get('/health').expect(200);assert.equal(r.body.version,'3.7.0');
   await request(app).get('/api/imagenes').expect(401);
+  await request(app).get('/api/medios/reel/1/eliminacion').expect(401);
+  await request(app).delete('/api/medios/reel/1').send({confirmacion:true}).expect(401);
   await request(app).post('/api/instagram/procesar-programadas').expect(401);
 });
 test('generar, reintentar y editar texto conserva fondo sin volver a llamar a Cloudflare',async()=>{
