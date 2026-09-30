@@ -25,7 +25,7 @@ before(async()=>{
 after(async()=>db.close());
 const auth=req=>req.set('Authorization','Bearer local-test-key');
 test('health comprueba base y API rechaza peticiones sin autenticación',async()=>{
-  const r=await request(app).get('/health').expect(200);assert.equal(r.body.version,'3.5.0');
+  const r=await request(app).get('/health').expect(200);assert.equal(r.body.version,'3.6.0');
   await request(app).get('/api/imagenes').expect(401);
   await request(app).post('/api/instagram/procesar-programadas').expect(401);
 });

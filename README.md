@@ -66,3 +66,15 @@ La migración es aditiva e idempotente. Programaciones anteriores mantienen hora
 No volver a 3.4 con piezas nuevas activas: no comprende el control de aprobación. Si falla el despliegue, bloquear nuevas publicaciones y corregir 3.5; no borrar datos o columnas de la migración.
 
 Las pruebas locales no sustituyen la validación contra Meta y Cloudflare después del despliegue.
+
+## v3.6: Reels económicos y retención
+
+- `POST /api/reels`: `request_id`, `image_ids` (3–5 imágenes almacenadas). Encola un montaje MP4 720×1280, 24 fps, 5 segundos por escena, fundidos y sin audio. No genera video con IA ni graba la app. Las escenas nuevas siguen consumiendo la cuota de imágenes.
+- `GET /api/reels/:id`: consultar hasta `lista`; devuelve `video_url` HTTPS. Mostrar siempre enlace de vista previa. No regenerar si está pendiente.
+- `POST /api/instagram/borradores-reel`: `request_id`, `reel_id`, `caption`. Luego usar aprobación, programación y publicación existentes. Editar un Reel requiere un nuevo borrador y cancelar el anterior.
+- El proceso Node monta un trabajo por vez cada 15 segundos, con reserva en PostgreSQL, FFmpeg y límite de 180 segundos/12 MiB. En Render Free depende de que el servicio esté despierto; el cron externo existente ayuda a mantener actividad. Un reinicio deja los trabajos interrumpidos en error tras 10 minutos, nunca duplica publicaciones.
+- Los videos se sirven con soporte HTTP Range. Los archivos permanecen en PostgreSQL, no en disco efímero.
+- Limpieza horaria, máximo una vez por día: libera bytes de imagen/fondo/video tras 7 días desde publicación o verificación confirmada. Protege cualquier referencia en otro estado y escenas de reels no archivados. Conserva copy, IDs, auditoría e historial y NO borra contenido en Instagram. No elimina borradores, errores ni medios nunca publicados. URLs archivadas devuelven 410.
+- PostgreSQL reutiliza el espacio liberado mediante su mantenimiento normal; no se promete reducción inmediata del tamaño físico ni de la factura. Los respaldos pueden conservar versiones anteriores.
+- Actualizar en el GPT **openapi-gpt.json** e **GPT_INSTRUCTIONS.md** (menos de 8.000 caracteres). No hay nuevas credenciales. FFmpeg se instala con npm (`ffmpeg-static`); opcional `FFMPEG_PATH` para un binario propio.
+- Pruebas incluyen montaje MP4 real, publicación de reel simulada, aprobación y limpieza de medios compartidos. La publicación real en Instagram debe probarse con una pieza expresamente aprobada por Cristian.

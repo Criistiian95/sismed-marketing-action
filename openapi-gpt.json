@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Sismed Marketing API",
-    "version": "3.5.0",
+    "version": "3.6.0",
     "description": "API para prospectos, imágenes de marketing y publicaciones de Instagram de Sismed. Nunca debe almacenar datos clínicos ni datos de pacientes.\n"
   },
   "servers": [
@@ -1117,6 +1117,135 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/reels": {
+      "post": {
+        "operationId": "crearReelMarketing",
+        "summary": "Montar 3 a 5 imágenes existentes en un reel de 15 a 25 segundos, sin audio. Devuelve pendiente: consultar después; no publicar.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "request_id": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 100,
+                    "pattern": "^[a-zA-Z0-9_-]+$"
+                  },
+                  "image_ids": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 5,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                "required": [
+                  "request_id",
+                  "image_ids"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resultado; consultar estado y URL exactos"
+          },
+          "409": {
+            "description": "Conflicto o medio aún no disponible"
+          }
+        }
+      }
+    },
+    "/api/reels/{id}": {
+      "get": {
+        "operationId": "consultarReelMarketing",
+        "summary": "Consultar montaje; cuando esté lista, mostrar video_url exacta y enlace para revisar.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estado pendiente, procesando, lista o error; video_url pública si disponible"
+          }
+        }
+      }
+    },
+    "/api/instagram/borradores-reel": {
+      "post": {
+        "operationId": "crearBorradorReelInstagram",
+        "summary": "Guardar reel listo como borrador. Mostrar video y copy; exigir aprobación de esta revisión antes de publicar/programar.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "request_id": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 100,
+                    "pattern": "^[a-zA-Z0-9_-]+$"
+                  },
+                  "reel_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "caption": {
+                    "type": "string",
+                    "maxLength": 2200
+                  }
+                },
+                "required": [
+                  "request_id",
+                  "reel_id",
+                  "caption"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resultado; consultar estado y URL exactos"
+          },
+          "409": {
+            "description": "Conflicto o medio aún no disponible"
           }
         }
       }

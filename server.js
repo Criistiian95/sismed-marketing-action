@@ -7,6 +7,8 @@ const { createHash } = require("node:crypto");
 const { applySismedOverlay, prepareLayout, validateCopy } = require("./lib/image-layout");
 const { migrate, registerRoutes } = require("./lib/publications");
 
+const {migrateMedia,createReels}=require('./lib/reels');
+const {cleanup}=require('./lib/retention');
 const app = express();
 
 app.use(helmet({
@@ -140,6 +142,7 @@ async function init() {
     request_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, status TEXT NOT NULL,
     resultado JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   await migrate(pool);
+  await migrateMedia(pool);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_prospectos_estado
     ON prospectos_sismed (estado)
@@ -378,6 +381,7 @@ app.get("/media/generated/:file", async (req, res) => {
     }
 
     const item = result.rows[0];
+    if(!item.image_data)return res.status(410).send("Archivo archivado tras su publicación");
 
     res.set("Content-Type", item.mime_type || "image/png");
     res.set("Cache-Control", "public, max-age=31536000, immutable");
@@ -392,7 +396,7 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "3.5.0"
+    version: "3.6.0"
   });
 });
 
@@ -403,7 +407,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "3.5.0"
+      version: "3.6.0"
     });
   } catch (error) {
     console.error(error);
@@ -702,7 +706,7 @@ app.get("/api/imagenes", async (req, res) => {
 
     const result = await pool.query(
       `
-      SELECT id, prompt, model, size, quality, mime_type, created_at
+      SELECT id, prompt, model, size, quality, mime_type, created_at, purged_at
       FROM imagenes_marketing
       ORDER BY created_at DESC
       LIMIT $1
@@ -714,7 +718,7 @@ app.get("/api/imagenes", async (req, res) => {
       total: result.rows.length,
       imagenes: result.rows.map((item) => ({
         ...item,
-        url: `${PUBLIC_BASE_URL}/media/generated/${item.id}.jpg`
+        url: item.purged_at ? null : `${PUBLIC_BASE_URL}/media/generated/${item.id}.jpg`
       }))
     });
   } catch (error) {
@@ -751,12 +755,32 @@ app.get("/api/instagram/status", async (_req, res) => {
   }
 });
 
+const reels=createReels({pool,publicBaseUrl:PUBLIC_BASE_URL});
+const reelRoute=fn=>async(req,res)=>{try{res.json(await fn(req));}catch(e){res.status(e.status||500).json({error:e.status?e.message:'Error interno'});}};
+app.post('/api/reels',reelRoute(req=>reels.create(req.body||{})));
+app.get('/api/reels/:id',reelRoute(req=>reels.get(req.params.id)));
+// Public MP4 endpoint with range support for preview and Meta downloads.
+app.get('/media/reels/:id.mp4',async(req,res)=>{
+ try{
+ if(!/^\d+$/.test(req.params.id))return res.sendStatus(400);
+ const r=await pool.query('SELECT video_data,purged_at FROM reels_marketing WHERE id=$1',[req.params.id]);
+ if(!r.rows.length)return res.sendStatus(404);if(!r.rows[0].video_data)return res.sendStatus(r.rows[0].purged_at?410:404);
+ const data=r.rows[0].video_data;res.set({'Content-Type':'video/mp4','Accept-Ranges':'bytes','Cache-Control':'public, max-age=3600'});
+ if(req.headers.range){const m=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range);if(!m)return res.status(416).set('Content-Range',`bytes */${data.length}`).end();
+ const start=Number(m[1]),end=m[2]?Math.min(Number(m[2]),data.length-1):data.length-1;
+ if(start>end||start>=data.length)return res.status(416).set('Content-Range',`bytes */${data.length}`).end();
+ return res.status(206).set('Content-Range',`bytes ${start}-${end}/${data.length}`).send(data.subarray(start,end+1));}
+ res.send(data);
+ }catch(_){res.sendStatus(500);}
+});
 registerRoutes(app, { pool, igRequest, accountId: IG_ACCOUNT_ID, publicBaseUrl: PUBLIC_BASE_URL });
 
 if (require.main === module) init()
   .then(() => {
+    setInterval(()=>reels.process().catch(()=>console.error('Fallo procesando reel')),15000).unref();
+    setInterval(()=>cleanup(pool).catch(()=>console.error('Fallo de limpieza de medios')),3600000).unref();
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Sismed Action v3.5 listening on ${PORT}`);
+      console.log(`Sismed Action v3.6 listening on ${PORT}`);
     });
   })
   .catch((error) => {
