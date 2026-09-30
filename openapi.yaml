@@ -346,14 +346,14 @@ paths:
                     - string
                     - 'null'
   /api/instagram/programaciones/{id}/publicar:
-    parameters:
-    - name: id
-      in: path
-      required: true
-      schema:
-        type: integer
-        minimum: 1
     post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
       operationId: publicarProgramacionInstagram
       summary: Publicar una programación aprobada
       description: Comparte reserva con el cron.
@@ -433,14 +433,14 @@ paths:
                   type: string
                   maxLength: 2200
   /api/instagram/programaciones/{id}:
-    parameters:
-    - name: id
-      in: path
-      required: true
-      schema:
-        type: integer
-        minimum: 1
     get:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
       operationId: consultarPublicacionInstagram
       summary: Consultar una pieza y su estado exacto
       description: Preferir consulta por id ante timeout.
@@ -461,6 +461,13 @@ paths:
         '502':
           description: Resultado incierto; consultar antes de repetir
     patch:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
       operationId: editarBorradorInstagram
       summary: Editar pieza e invalidar aprobación
       description: Retira programación y aumenta revision. Mostrar nuevamente para
@@ -503,14 +510,14 @@ paths:
                   type: string
                   maxLength: 2200
   /api/instagram/programaciones/{id}/aprobar:
-    parameters:
-    - name: id
-      in: path
-      required: true
-      schema:
-        type: integer
-        minimum: 1
     post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
       operationId: aprobarPublicacionInstagram
       summary: Registrar aprobación explícita de una versión
       description: Solo después de mostrar imagen y copy exactos y recibir aprobación
@@ -550,14 +557,14 @@ paths:
                   enum:
                   - true
   /api/instagram/programaciones/{id}/cancelar:
-    parameters:
-    - name: id
-      in: path
-      required: true
-      schema:
-        type: integer
-        minimum: 1
     post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
       operationId: cancelarPublicacionInstagram
       summary: Cancelar antes de iniciar publicación
       description: No permite cancelar operaciones en curso.
@@ -591,14 +598,14 @@ paths:
                   type: integer
                   minimum: 1
   /api/instagram/programaciones/{id}/verificar:
-    parameters:
-    - name: id
-      in: path
-      required: true
-      schema:
-        type: integer
-        minimum: 1
     post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
       operationId: verificarResultadoInstagram
       summary: Consultar un resultado incierto en Instagram
       description: No reenvía. Marca publicada solo si el contenedor devuelve PUBLISHED.
@@ -630,14 +637,14 @@ paths:
         '502':
           description: Resultado incierto; consultar antes de repetir
   /api/imagenes/{id}/textos:
-    parameters:
-    - name: id
-      in: path
-      required: true
-      schema:
-        type: integer
-        minimum: 1
     post:
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
       operationId: editarTextosImagenMarketing
       summary: Crear otra versión usando el mismo fondo
       description: No consume Cloudflare. Solo imágenes nuevas que conservan fondo.
