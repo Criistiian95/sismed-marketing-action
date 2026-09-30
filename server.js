@@ -398,7 +398,7 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     service: "Sismed Marketing IA",
-    version: "3.7.0"
+    version: "3.7.1"
   });
 });
 
@@ -409,7 +409,7 @@ app.get("/health", async (_req, res) => {
     res.json({
       ok: true,
       service: "sismed-marketing-action",
-      version: "3.7.0"
+      version: "3.7.1"
     });
   } catch (error) {
     console.error(error);

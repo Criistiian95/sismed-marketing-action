@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Sismed Marketing API
-  version: 3.7.0
+  version: 3.7.1
   description: >
     API para prospectos, imágenes de marketing y publicaciones de Instagram de
     Sismed. Nunca debe almacenar datos clínicos ni datos de pacientes.
@@ -846,8 +846,8 @@ paths:
             a Cristian.
         "404":
           description: Medio inexistente
-  /api/medios/{tipo}/{id}:
-    delete:
+  /api/medios/{tipo}/{id}/eliminar:
+    post:
       operationId: eliminarMedioMarketing
       summary: Eliminar bytes de una imagen o reel con autorización explícita de
         Cristian. Conserva IDs e historial, no borra en Instagram. Nunca

@@ -57,6 +57,7 @@ test('rutas requieren confirmación, validan identidad y exponen estado final',a
  await request(app).get('/api/medios/reel/99/eliminacion').expect(404);
  await request(app).delete('/api/medios/reel/1').send({confirmacion:false}).expect(400);
  const p=(await request(app).get('/api/medios/reel/1/eliminacion').expect(200)).body;
- await request(app).delete('/api/medios/reel/1').send(confirm(p)).expect(200);
+ await request(app).post('/api/medios/reel/1/eliminar').send({confirmacion:true}).expect(400);
+ await request(app).post('/api/medios/reel/1/eliminar').send(confirm(p)).expect(200);
  assert.equal((await request(app).get('/api/medios/reel/1/eliminacion')).body.archivo_eliminado,true);
 });
